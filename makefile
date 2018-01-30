@@ -1,4 +1,5 @@
-PYTHON_VER=3.5
+PYTHON_TARGET_VER=3.5
+PYTHON_EXE=python3
 
 cocos := $(wildcard npipes/*.coco)
 pythons := $(wildcard npipes/*.py)
@@ -10,7 +11,7 @@ build: cocofiles pythonfiles
 	mkdir -p build
 	cp -r npipes/*.coco build/.
 	cp -r npipes/*.py build/.
-	python3.6 `which coconut` -l -t $(PYTHON_VER) build/. --mypy
+	$(PYTHON_EXE) `which coconut` -l -t $(PYTHON_TARGET_VER) build/. --mypy
 
 install: build
 	rm -rf install
@@ -18,10 +19,10 @@ install: build
 	cp build/*.py install/.
 
 run:
-	python3.6 install/npipes/experiments.py
+	$(PYTHON_EXE) install/npipes/experiments.py
 
 test: install
-	PYTHONPATH=install python3.6 tests/processorTests.py
+	PYTHONPATH=install $(PYTHON_EXE) tests/processorTests.py
 
 test-run: 
-	PYTHONPATH=install python3.6 tests/processorTests.py
+	PYTHONPATH=install $(PYTHON_EXE) tests/processorTests.py
