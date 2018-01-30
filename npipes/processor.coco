@@ -1,0 +1,240 @@
+from typing import Tuple, NamedTuple, List, Dict, Union, Type, Any, Optional
+import subprocess
+import secrets
+import zipfile
+from pathlib import Path
+import distutils.dir_util
+
+from message import (
+    S3Path, Uri, Topic, Queuename, Body, Filepath,
+    TriggerSNS, TriggerSQS, TriggerGet, TriggerPost, TriggerLambda, Trigger,
+    S3Asset, UriAsset, Asset, AssetSettings, Decompression,
+    ProtocolEZQ, ProtocolNpipes, Protocol,
+    OutputChannelStdout, OutputChannelFile, OutputChannel,
+    Command,
+    Step, Header, Message,
+    peekStep, popStep, peekTrigger )
+
+from serialize import toJson, fromJson
+
+from outcome import Outcome, Success, Failure
+
+
+
+def localizeAssets(assets:Asset[]) -> Outcome:
+    # TODO: this fmap call should spawn threads and wait on them
+    outcomes = fmap(localizeAsset, assets)
+    # TODO: Do something to reduce the Outcome_s
+    return Success()
+
+
+def localizeAsset(asset:Asset) -> Outcome:
+    tempname = genUniqueAssetName(asset)
+
+    return ( localizeAssetTyped(asset, tempname) >>
+             decompressIfRequired$(?, asset) >>
+             renameToLocalTarget$(?, asset) )
+
+# These localizeAssetTyped patterns *must* return Success(target) if all
+# went well. (That allows easier composition and chaining.)
+def localizeAssetTyped(S3Asset(path), target):
+    # type: (Asset, str) -> Outcome
+    # TODO: do some stuff with boto
+
+    return Success(target)
+
+
+@addpattern(localizeAssetTyped) # type: ignore
+def localizeAssetTyped(UriAsset(uri), target):
+    # type: (UriAsset, str) -> Outcome
+    # TODO: do some stuff with requests.py
+    return Success(target)
+
+
+
+def genUniqueAssetName(asset:Asset) -> str:
+    token = secrets.token_hex(8)
+    ext = getAssetRawExt(asset)
+    return "{}.{}".format(token, ext)
+
+
+def decompressIfRequired(fname:str, asset:Asset) -> Outcome:
+    if asset.settings.decompression.decompress:
+        return decompress(fname)
+    else:
+        return Success(fname)
+
+
+def decompress(path:str) -> Outcome:
+    # TODO: - choose decompression method from filename
+    #       - invoke decompressor
+    #       - return path to decompressed file
+    return Success(path)
+
+
+def decompressZip(file:str) -> Outcome:
+    # Unzip into a temporary dir that can later be renamed as per localTarget
+    try:
+        with zipfile.ZipFile(file) as z:
+            z.extractall()
+        return Success(file)
+    except Exception as err:
+        return Failure("Decompression error: {}".format(err))
+
+
+def decompressGzip(file:str) -> Outcome:
+    # TODO: Decompress and then return the decompressed file's name
+    return Success(file)
+
+
+def renameToLocalTarget(fname:str, asset:Asset) -> Outcome:
+    target = decideLocalTarget(asset)
+    targetPath = Path(target)
+    try:
+        targetPath.parent.mkdir(parents=True, exist_ok=True)
+        if targetPath.name is not ".":
+            Path(fname).rename(targetPath)
+        else:
+            # FIXME: I don't like this. Python does not have a good library function
+            # to recursively move files. Should write my own to avoid unnecessary disk
+            # use in this copy all then delete all process.
+            if Path(fname).is_dir():
+                distutils.dir_util.copy_tree(fname, target)
+                distutils.dir_util.remove_tree(fname)
+            else:
+                return Failure("Unable to rename a file to {}".format(targetPath))
+        return Success(target)
+    except Exception as err:
+        return Failure("Error renaming to local target {}: {}".format(target, err))
+
+
+def getAssetRawExt(asset:Asset) -> str:
+    leaf = decideLocalTargetTyped(asset)
+    ext = leaf |> .split('.') |> .[1:] |> '.'.join
+    return ext
+
+
+def decideLocalTarget(asset:Asset) -> str:
+    if asset.settings.localTarget:
+        return asset.settings.localTarget
+    else:
+        return decideLocalTargetTyped(asset)
+
+
+def decideLocalTargetTyped(S3Asset(path)):
+    # type: (Asset) -> str
+    # Remove protocol and bucket, returning *full* S3 key
+    target = path |> .split('/') |> .[2:] |> '/'.join
+    return target
+
+
+@addpattern(decideLocalTargetTyped) # type: ignore
+def decideLocalTargetTyped(UriAsset(uri)):
+    # Return everything past the last '/'
+    target = uri |> .split('/') |> .[-1]
+    return target
+
+
+# command vars should be expanded prior to calling this function!
+def runCommand(command:Command, body:str) -> Outcome:
+    # TODO: Push this onto another thread and periodically examine state.run
+    # to handle early exit
+    timeout = None if command.timeout is 0 else command.timeout
+
+    input = body.encode("utf-8") if command.inputChannelStdin else None
+
+    return ( run(command, input, timeout) >>
+             scrapeOutput$(command)
+           )
+
+
+def scrapeOutput(command:Command, cmdstdout:str) -> Outcome:
+    case command.outputChannel:
+        match OutputChannelStdout():
+            result = Success(cmdstdout) # type: Outcome
+        match OutputChannelFile(filepath): # type: ignore # <- expanded code is type unstable
+            # TODO: read in file? Set result to a dict? Have a hook to send file
+            #       somewhere like S3?
+            # Presumably something in here could fail and return a Failure...
+            result = Success(filepath)
+    else:
+        result = Failure("Unknown type of OutputChannel")
+    return result
+
+
+def run(command:Command, input:Optional[bytes], timeout:int) -> Outcome:
+    try:
+        cp = subprocess.run(command.arglist, input=input, timeout=timeout,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except subprocess.TimeoutExpired as teerr:
+        return Failure("Command timed out")
+    except Exception as err:
+        return Failure("Unknown error running command: {}".format(err))
+
+    if cp.returncode is not 0:
+        return Failure("Exit code: {}\nstdout: {}\nstderr: {}".format(
+                                cp.returncode, cp.stdout, cp.stderr))
+    else:
+        return Success(cp.stdout)
+
+
+# This should live inside each Trigger
+# def parseBlob(data:str) -> Message:
+#     pass
+
+
+def loopTrigger(trigger:Trigger) -> None:
+    # TODO: check value of state.run rather than constant True
+    while True:
+        runTrigger(trigger)
+
+
+def runTrigger(trigger:Trigger) -> Outcome:
+    msg = trigger.awaitMessage() # () -> Message
+    step, newHeader = popStep(msg.header)
+
+    return ( localizeAssets(step.assets) >>
+             (_ -> (expandCommand(step, msg.body) |>
+                    runCommand$(?, msg.body))) >>
+             triggerNextStep$(?, newHeader)
+           )
+
+    # assetsLocalized = localizeAssets(step.assets)
+
+    # match Failure(reason) in assetsLocalized:
+    #     # TODO: ??? what to do if assets didn't localize?
+    #     #       at least log the reason, then:
+    #     return Failure(reason)
+
+    # command = expandCommand(step, msg.body)
+    # ran = runCommand(command, msg.body)
+
+    # case ran:
+    #     match Failure(reason):
+    #         # TODO: log it and what else?
+    #         return Failure(reason)
+    #     match Success(result):
+    #         triggerNextStep(result, newHeader)
+
+
+    # return Success()
+
+
+def triggerNextStep(result:Any, header:Header) -> Outcome:
+    # peek the next step to determine its trigger type
+    # hand its trigger info and the result to an instance
+    # of the next trigger, and call ... whatever that method
+    # is called to send the message.
+    return Success()
+
+
+def expandCommand(step:Step, body:str) -> Command:
+    assets = step.assets
+    targetsForIds = ( (fmap(.id, assets), fmap(decideLocalTarget, assets))
+                      |*> zip
+                      |> dict ) # type: Dict[str, str]
+
+    # string replace on step.command to fill in assets and
+    # (file containing local message | message body contents)
+    # TODO: don't actually return this with no changes!
+    return step.command

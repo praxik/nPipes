@@ -1,0 +1,9 @@
+build/
+install/
+.mypy_cache/
+private/
+tmp/
+jammy.zip
+locate.db
+
+

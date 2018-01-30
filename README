@@ -1,0 +1,93 @@
+nPipes
+---
+Pipes for the cloud.
+
+`ls -Fal | grep foo | wc`
+
+If you've ever written a *nix command sequence like that, you understand
+the power of pipelines. nPipes lets you do this with commandline-style
+applications over an arbitrary set of worker nodes in the cloud.
+
+How?
+You declaratively specify a series of *command-based*, step-wise
+transforms over some data.
+Each step in the pipe can exist on a different logical node, and various
+trigger/transport mechanisms can be used to connect steps. Triggers/transports
+are the network version of the `|` in a *nix commandline pipeline. nPipes currently
+supports SQS, SNS, HTTP GET, HTTP POST, and direct AWS Lambda function calls
+as triggers/transports. It's simple and straightforward to add additional triggers
+and transports to allow nodes to exist on Google Cloud, Azure, Heroku, etc.
+
+It looks like this:
+```YAML
+steps:
+- assets: []
+  command: ls -Fal
+  description: Lists files in the local dir
+  id: list
+  outputChannel: {type: Stdout}
+  protocol: Npipes
+  trigger: {queuename: lister_queue, type: SQS}
+- assets: []
+  command: ''
+  description: Call dedicated function that greps 'foo' in its input
+  id: foo_grepper
+  outputChannel: {type: Stdout}
+  protocol: Npipes
+  trigger: {topic: 'arn:blah:blah:fooGrepTopic', type: SNS}
+- assets: []
+  command: ''
+  description: Get word count
+  id: word_count
+  outputChannel: {type: Stdout}
+  protocol: Npipes
+  trigger: {queuename: counter_queue, type: SQS}
+- assets: []
+  command: ''
+  description: Some other process can now pick the results up from here
+  id: final
+  outputChannel: {type: Stdout}
+  protocol: Npipes
+  trigger: {queuename: operation_results, type: SQS}
+```
+
+That's a distributed version of `ls -Fal | grep foo | wc`. Let's break down
+what's going on.
+* In the first step, we're going to send a message to an SQS. There's
+a pre-existing worker node running nPipes, and watching that queue for messages. When
+nPipes on that node gets the message, it sees that we want to run the command `ls -Fal`,
+and that we want to capture the STDOUT of that command and feed it as the message *body*
+to the next step. It sees that the next step exists at an SNS topic, so it sends the
+message to that topic.
+* The second step turns out to be a worker node we've set up that we don't have to pass
+a specific command to. It does one thing, and always does the same thing: takes the input
+data, greps it for `foo`, and writes the output to STDOUT. In a real workflow, this would
+most likely me a Lambda function that always does exactly the same thing every time, but
+that you prefer to trigger using SNS rather than calling it directly. Again though, even
+this Lambda function is setup to run nPipes as part of its process. So nPipes packages up
+the result of the grep, then looks at the next step to see what to do with it. Ah, we're
+going to send it to another SQS queue.
+* The third step is again a node (somewhere...on some network that lets us poll an
+SQS queue...) that runs nPipes. It pulls down the message -- which contains the output
+of the previous step -- and it runs a command over it. Again in this case, we've decided
+that we have a dedicated worker node that does nothing but run `wc` over an input and
+spit out the result. This will be a common setup for many workflows. It takes those results
+and sends them to the SQS queue specified in the last step.
+* The fourth step...well, the fourth step here is strictly a termination point. There's no
+worker node running nPipes here. It's just an SQS queue to hold some results. Now, we *could*
+connect a node running nPipes up to that queue, pull in those results and spawn off some more
+pipelines...or perhaps you have a dedicated database application that watches that queue for
+messages...or a web service...or whatever. As far as nPipes is concerned, we're out of steps,
+so we're done.
+
+For many pipeline-style workflows, nPipes allows you to structure individual
+transform steps as simple commandline operations that need not have *any*
+knowledge of cloud services such as distributed queues, messaging systems, cloud
+storage, etc. Write your application so it slurps in data from STDIN or a local file,
+and writes output to a local file or to STDOUT. nPipes takes care of the
+abstraction layer to deal with particular cloud services.
+
+Since nPipes allows you to structure your transforms as vanilla commandline applications,
+you are free to choose any language, toolkit, or SDK available on your target
+platform. nPipes itself is written in Python, but there's absolutely no need
+to access its Python API in order to build a transform step.

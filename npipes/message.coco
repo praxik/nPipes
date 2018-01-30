@@ -1,0 +1,367 @@
+from typing import Tuple, NamedTuple, Type, Union, IO, NewType, Any, List
+from serialize import Serializable
+from outcome import Outcome, Success, Failure
+
+class TriggerImpl:
+    def awaitMessage(self) -> Message:
+        pass
+
+    def sendMessage(self, message:Message) -> Outcome:
+        pass
+
+class TriggerSNSImpl(TriggerImpl):
+    def awaitMessage(self):
+        pass
+    def sendMessage(self, message):
+        pass
+
+##############################################################################
+# Typealiases
+##############################################################################
+
+S3Path = NewType("S3Path", str)
+Uri = NewType("Uri", str)
+Topic = NewType("Topic", str)
+Queuename = NewType("Queuename", str)
+Body = NewType("Body", str)
+Filepath = NewType("Filepath", str)
+
+##############################################################################
+# Primary Types
+##############################################################################
+
+########################
+# Trigger
+########################
+class Trigger(Serializable, TriggerImpl):
+    def _fromDict(d):
+        case d["type"].lower():
+            match "sns":
+                return TriggerSNS(Topic(d["topic"]))
+            match "sqs":
+                return TriggerSQS(Queuename(d["queuename"]))
+            match "get":
+                return TriggerGet(Uri(d["uri"]))
+            match "post":
+                return TriggerPost(Uri(d["uri"]))
+            match "lambda":
+                return TriggerLambda(d["name"])
+
+
+data TriggerSNS(topic:Topic) from Trigger:
+    def _toDict(self) = {"topic": self.topic, "type": "SNS"}
+    def awaitMessage(self) = TriggerSNSImpl.awaitMessage()
+    def sendMessage(self, message) = TriggerSNSImpl.sendMessage(message)
+
+data TriggerSQS(queuename:Queuename) from Trigger:
+    def _toDict(self) = {"queuename": self.queuename, "type": "SQS"}
+
+data TriggerGet(uri:Uri) from Trigger:
+    def _toDict(self) = {"uri": self.uri, "type": "Get"}
+
+data TriggerPost(uri:Uri) from Trigger:
+    def _toDict(self) = {"uri": self.uri, "type": "Post"}
+
+data TriggerLambda(name:str) from Trigger:
+    def _toDict(self) = {"name": self.name, "type": "Lambda"}
+
+
+########################
+# Decompression
+########################
+data Decompression( decompress:bool=False,
+                  #  preserveFilename:bool=False
+		  ) from Serializable:
+    def _toDict(self) = dict(self._asdict())
+    def _fromDict(d) = Decompression( decompress=d.get("decompress"),
+                                    #  preserveFilename=d.get("preserveFilename")
+                                    )
+
+
+data AssetSettings( id:str,
+                    decompression:Decompression=Decompression(),
+                    localTarget:str=""
+	          ) from Serializable:
+    """
+    **id** is used as an expansion variable in a Command; eg. id=foo can be
+    referenced in a command as **$foo**. Expansion value is determined by the first
+    appropriate rule as follows:
+    1. If localTarget is a non-empty string, its value is the expanded value.
+       NOTE: if the asset is an archive format (zip, tar, etc) and decompression
+       is turned on for it, localTarget will refer to a **directory** on disk,
+       not to a single file. (Makes sense once you think about it....)
+    2. The default local target associated with a particular Asset type is used.
+       See documentation for individual Asset types.
+    """
+    def _toDict(self) = { "id": self.id,
+                          "decompression": self.decompression._toDict(),
+			  "localTarget": self.localTarget
+			}
+    def _fromDict(d) = AssetSettings( id=d.get("id"),
+                                      decompression=Decompression._fromDict((d.get("decompression"))),
+                                      localTarget=d.get("localTarget"))
+
+
+########################
+# Asset
+########################
+class Asset(Serializable):
+    """Sum type describing non-local assets that should be localized prior to
+       running a Step's Command.
+    """
+    settings = AssetSettings("") # Stub property. Should this use ABC or protocol instead?
+
+    def _fromDict(d):
+        case d.get("type").lower():
+            match "s3":
+                return S3Asset._fromDict(d)
+            match "uri":
+                return UriAsset._fromDict(d)
+
+data S3Asset( path:S3Path,
+              settings:AssetSettings ) from Asset:
+    """An asset, stored in S3.
+
+       **path**: S3 path of the form s3://bucket/key/parts/here
+                 NOTE: This is *not* a web url! If you want to access S3 assets
+                 explicitly via the REST interface to S3, use UriAsset.
+
+       The default local target for an S3Asset is $PWD/key/parts/here ; that is,
+       everything beyond s3://bucket/ is used as part of the local filename
+       (unless an explicit localTarget is set in the AssetSettings).
+    """
+    def _toDict(self) = { "path": self.path,
+                          "type": "S3",
+                          "settings": self.settings._toDict() }
+    def _fromDict(d) = S3Asset( path=S3Path(d.get("path")),
+                                settings=AssetSettings._fromDict(d.get("settings")))
+
+data UriAsset( uri:Uri,
+               settings:AssetSettings ) from Asset:
+    """An asset that exists at a URI.
+
+       **uri**: A uri like `https://my.domain.com/file.txt`
+
+       The default local target for a UriAsset is everything beyond the last `/`
+       in the uri. For the example above, the local target would be `file.txt`.
+       If your uri contains a query or anything that might lead to a long and
+       unwieldy filename, it is highly recommended to explicitly set a
+       localTarget in the AssetSettings.
+    """
+    def _toDict(self) = { "uri": self.uri,
+                          "type": "Uri",
+                          "settings": self.settings._toDict() }
+    def _fromDict(d) = UriAsset( path=Uri(d.get("uri")),
+                                 settings=AssetSettings._fromDict(d.get("settings")))
+
+
+########################
+# Protocol
+########################
+class Protocol(Serializable):
+    """Sum type describing which *input* message protocol to use for a Step:
+       ProtocolNpipes (default, and recommended)
+       ProtocolEZQ (deprecated, available for backward compatibility)
+    """
+    def _fromDict(d):
+        case d.lower():
+            match "ezq":
+                return ProtocolEZQ()
+            match "npipes":
+                return ProtocolNpipes()
+
+data ProtocolEZQ from Protocol:
+    def _toDict(self) = "EZQ"
+
+data ProtocolNpipes from Protocol:
+    def _toDict(self) = "npipes"
+
+
+########################
+# OutputChannel
+########################
+class OutputChannel(Serializable):
+    """Sum type describing where Command should look for output.
+       OutputChannelStdout indicates the STDOUT of the command's child process.
+       OutputChannelFile indicates a named file on disk.
+    """
+    def _fromDict(d):
+        case d.get("type").lower():
+            match "stdout":
+                return OutputChannelStdout()
+            match "file":
+                return OutputChannelFile(Filepath(d.get("filepath")))
+
+data OutputChannelStdout from OutputChannel:
+    def _toDict(self) = {"type": "Stdout"}
+
+data OutputChannelFile( filepath:Filepath ) from OutputChannel:
+    def _toDict(self) = {"filepath": self.filepath, "type": "File"}
+
+
+
+########################
+# Command
+########################
+data Command( arglist:List[str]=[""], # Command exe and all args as *separate* strings in list
+              timeout:int=0, # Time to wait for command to complete
+              inputChannelStdin:bool=False,
+              outputChannel:OutputChannel=OutputChannelStdout()
+	      ) from Serializable:
+    """Command name and all arguments should appear as separate string entries
+       in arglist. If you need your command to run inside a shell, do something
+       like this: arglist=["bash", "-c", "ls -Fal *.txt | grep foo | wc"]
+
+       timeout specifies seconds to wait for the executable in arglist to
+       complete. A timeout of 0 indicates NO timeout. This is orthogonal
+       to the timeout associated with a Step.
+
+       If inputChannelStdin is True, the message body will be placed directly on
+       stdin; otherwise, the message body is written to disk (absolute file path
+       can be referenced as $bodyfile) and the body contents are expanded into
+       the variable $bodycontents. See below for more information about these
+       variables.
+
+       Special command variables
+       -------------------------
+       Each string in arglist can include variables of the form $varname
+       that will be expanded into a final commandstring before a command is
+       run. This allows you to easily reference assets by consistent identifiers,
+       rather than having to generate a custom commandline for every single step
+       of every single message. The following variables are supported:
+
+       $some_asset_id -- each asset in an Assets list has a string-based identifier
+                         which is automatically turned into a variable. See docs for
+                         AssetSettings for full documentation of how these are expanded.
+
+       $bodyfile -- absolute path of the file written to disk containing
+                    the message body. This allows nPipes to write bodies to unique,
+                    randomized filenames to avoid collision with other files on disk.
+                    This variable (and only this one) is also expanded in the value
+                    of OutputChannel if it is of type OutputChannelFile. This allows
+                    you to let nPipes know that your command will write its output to
+                    a file with a name like $bodyfile.out
+
+       $bodycontents -- the message body as a string
+
+       $headerfile -- absolute path of a file containing the Header of the current
+                      message. This is provided in case your transform logic needs to
+                      mutate the details of subsequent Steps in the message Header.
+    """
+    def _toDict(self) = { "arglist": self.arglist,
+                          "timeout": self.timeout,
+                          "inputChannelStdin": self.inputChannelStdin,
+                          "outputChannel": self.outputChannel._toDict()
+                        }
+
+    def _fromDict(d):
+        return Command(arglist=d.get("arglist",[""]),
+                       timeout=d.get("timeout", 0),
+                       inputChannelStdin=d.get("inputChannelStdin", False),
+                       outputChannel=OutputChannel._fromDict(d.get("outputChannel", {})))
+
+
+########################
+# Step
+########################
+data Step( id:str,
+           trigger:Trigger,
+           command:Command=Command(),
+	   stepTimeout:int=0,
+           assets:Asset[]=[],
+           protocol:Protocol=ProtocolNpipes(),
+           description:str=""
+	 ) from Serializable:
+    """Describes a single processing Step in a pipeline.
+
+    **id**: Unique id to allow searching for this Step
+    **trigger**: How do we trigger this Step?
+    **command**: Command to run for this step; overrides the command baked
+		into the worker iff lockCommand is False on the worker
+    **stepTimeout**: Allow *Step* to consume at most this much clock time
+		    (seconds); 0 means no timeout
+    **assets**: Non-local file assets that Command expects to find locally
+    **protocol**: Does this Step run on the old EZQ protocol or the new
+		Netpipes one?
+    **description**: What does this Step do?
+    """
+    def _toDict(self) = { "id": self.id,
+                          "trigger": self.trigger._toDict(),
+			  "command": self.command._toDict(),
+                          "stepTimeout": self.stepTimeout,
+			  "assets": fmap(._toDict(), self.assets),
+			  "protocol": self.protocol._toDict(),
+			  "description": self.description
+			}
+    def _fromDict(d):
+        return Step(id=d.get("id"),
+                    trigger=Trigger._fromDict(d.get("trigger")),
+                    command=Command._fromDict(d.get("command", {})),
+                    timeout=d.get("stepTimeout", 0),
+                    outputChannel=OutputChannel._fromDict(d.get("outputChannel"), {}),
+                    assets=fmap(Asset._fromDict, d.get("assets")),
+                    protocol=Protocol._fromDict(d.get("protocol")),
+                    description=d.get("description"))
+
+
+########################
+# Header
+########################
+data Header( steps:Step[]=[]) from Serializable:
+    def _toDict(self) = {"steps": fmap(._toDict(), self.steps)}
+    def _fromDict(d) = Header(steps=fmap(Step._fromDict, d.get("steps")))
+
+
+########################
+# Message
+########################
+data Message( header:Header=Header(),
+              body:Body=Body("") ) from Serializable:
+    def _toDict(self) = { "header": self.header._toDict(),
+                          "body": self.body
+			}
+    def _fromDict(d) = Message( body=d.get("body"),
+                                header=Header._fromDict(d.get("header")))
+
+    # I think these are wrong.
+    def _str(self) = "{header}\n{body}".format(header=self.header._toDict(), body=self.body)
+
+    def toJsonStr(self) = str(self)
+
+    # Need to think about what I'm going to require re: newlines, whitespace, etc.
+    #def _fromStr(s)
+
+##############################################################################
+# Functions
+##############################################################################
+
+def peekStep(Header(steps), n=0):
+    # type: (Header, int) -> Step
+    """Returns the nth Step in header"""
+    return steps[n]
+
+@addpattern(peekStep) # type: ignore
+def peekStep(Message(header, _), n=0):
+    # type: (Message, int) -> Step
+    """Returns the nth Step in message"""
+    return peekStep(header, n)
+
+
+def popStep(header:Header) -> Tuple[Step, Header]:
+    """Returns first Step in header, along with a new Header
+       containing the remaining Step's"""
+    step = header.steps[0]
+    nh = Header(header.steps[1:])
+    return (step, nh)
+
+
+def peekTrigger(Header(steps), n=0):
+    # type: (Header, int) -> Trigger
+    """Returns the Trigger for the nth Step in header"""
+    return steps[n].trigger
+
+@addpattern(peekTrigger) # type: ignore
+def peekTrigger(Message(header, _), n=0):
+    # type: (Message, int) -> Trigger
+    """Returns the Trigger for the nth Step in message"""
+    return peekTrigger(header, n)

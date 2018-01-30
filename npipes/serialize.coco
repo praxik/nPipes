@@ -1,0 +1,30 @@
+import json
+import yaml
+from typing import NamedTuple, Union, Type
+
+
+class Serializable:
+    """Derive from this class and implement _toDict and _fromDict
+       to get customized support for JSON and YAML serialization
+    """
+    def _toDict(self):
+        pass
+    def _fromDict(d):
+        pass
+
+
+def toJson(x:Serializable) -> str:
+    """Serialiazes a `Serializable` instance to JSON"""
+    return x |> ._toDict() |> json.dumps$(separators=(',',':'))
+
+def fromJson(jsonstr:Union[str,bytes, bytearray], typ:Type[Serializable]) -> Serializable:
+    """Deserializes `jsonstr` into an instance of `typ`"""
+    return jsonstr |> json.loads |> typ._fromDict
+
+def toYaml(x:Serializable) -> str:
+    """Serialiazes a `Serializable` instance to YAML"""
+    return x |> ._toDict() |> yaml.safe_dump
+
+def fromYaml(yamlstr:str, typ:Type[Serializable]) -> Serializable:
+    """Deserializes `yamlstr` into an instance of `typ`"""
+    return yamlstr |> yaml.load |> typ._fromDict
