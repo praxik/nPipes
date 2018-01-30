@@ -2,7 +2,7 @@
 
 from typing import Tuple, NamedTuple, List, Dict, Union, Type, Any, Optional
 import subprocess
-# import secrets
+import secrets
 import zipfile
 from pathlib import Path
 import distutils.dir_util
@@ -234,7 +234,7 @@ def expandCommand(step:Step, body:str) -> Command:
     assets = step.assets
     targetsForIds = ( (fmap(.id, assets), fmap(decideLocalTarget, assets))
                       |*> zip
-                      |> dict ) # type: Dict[str, str]
+                      |> dict )
 
     # string replace on step.command to fill in assets and
     # (file containing local message | message body contents)

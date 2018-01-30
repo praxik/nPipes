@@ -1,5 +1,5 @@
-PYTHON_TARGET_VER=3.5
-PYTHON_EXE=python3
+PYTHON_TARGET_VER=3.6
+PYTHON_EXE=python3.6
 
 cocos := $(wildcard npipes/*.coco)
 pythons := $(wildcard npipes/*.py)
@@ -17,6 +17,7 @@ install: build
 	rm -rf install
 	mkdir -p  install
 	cp build/*.py install/.
+	touch install/__init__.py
 
 run:
 	$(PYTHON_EXE) install/npipes/experiments.py
