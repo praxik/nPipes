@@ -1,3 +1,5 @@
+# -*- mode: python;-*-
+
 from processor import *
 from message import *
 from outcome import *

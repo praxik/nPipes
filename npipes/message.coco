@@ -1,3 +1,5 @@
+# -*- mode: python;-*-
+
 from typing import Tuple, NamedTuple, Type, Union, IO, NewType, Any, List
 from serialize import Serializable
 from outcome import Outcome, Success, Failure

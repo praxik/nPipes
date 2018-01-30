@@ -1,3 +1,5 @@
+# -*- mode: python;-*-
+
 import json
 import yaml
 from typing import NamedTuple, Union, Type
