@@ -2,8 +2,9 @@
 
 import json
 import yaml
-from typing import NamedTuple, Union, Type
+from typing import NamedTuple, Union, Type, Tuple, Any, Sequence, TypeVar
 
+T = TypeVar("T", bound="Serializable")
 
 class Serializable:
     """Derive from this class and implement _toDict and _fromDict
@@ -13,6 +14,26 @@ class Serializable:
         pass
     def _fromDict(d):
         pass
+    def _with(self:T, paths:Sequence[Tuple[str, Any]]) -> T:
+        """Make a copy of self, replacing values in paths with new values.
+
+           **paths** List of tuples, in which each tuple has the form
+                 (".key1.key2", value)
+                 where `value` is the new value to place at nested location
+                 `.key1.key2` The key path can be thought of as representing
+                 a normal python-style chained accessor.
+        """
+        d = self._toDict()
+        for path, val in paths:
+            dval = val._toDict() if isinstance(val, Serializable) else val
+            node = d
+            headkeys + [lastkey] = path.split('.')[1:] # type: ignore
+            for key in headkeys:
+                node = node.get(key)
+            node[lastkey] = dval
+        cls = self.__class__  # type: Type[T]
+        return cls._fromDict(d)
+
 
 
 def toJson(x:Serializable) -> str:
