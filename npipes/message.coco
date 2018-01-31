@@ -86,7 +86,7 @@ data AssetSettings( id:str,
 	          ) from Serializable:
     """
     **id** is used as an expansion variable in a Command; eg. id=foo can be
-    referenced in a command as **$foo**. Expansion value is determined by the first
+    referenced in a command as **${foo}**. Expansion value is determined by the first
     appropriate rule as follows:
     1. If localTarget is a non-empty string, its value is the expanded value.
        NOTE: if the asset is an archive format (zip, tar, etc) and decompression
@@ -111,7 +111,9 @@ class Asset(Serializable):
     """Sum type describing non-local assets that should be localized prior to
        running a Step's Command.
     """
-    settings = AssetSettings("") # Stub property. Should this use ABC or protocol instead?
+    # Stub property. Should this use ABC or protocol instead?
+    settings = AssetSettings("") # type: ignore # <- mypy doesn't like coconut's default value
+                                                # constructors
 
     def _fromDict(d):
         case d.get("type").lower():
@@ -226,29 +228,32 @@ data Command( arglist:List[str]=[""], # Command exe and all args as *separate* s
 
        Special command variables
        -------------------------
-       Each string in arglist can include variables of the form $varname
+       Each string in arglist can include variables of the form ${varname}
        that will be expanded into a final commandstring before a command is
        run. This allows you to easily reference assets by consistent identifiers,
        rather than having to generate a custom commandline for every single step
        of every single message. The following variables are supported:
 
-       $some_asset_id -- each asset in an Assets list has a string-based identifier
-                         which is automatically turned into a variable. See docs for
-                         AssetSettings for full documentation of how these are expanded.
+       **${some_asset_id}** -- each asset in an Assets list has a string-based
+                           identifier which is automatically turned into a
+                           variable. See docs for AssetSettings for full
+                           documentation of how these are expanded.
 
-       $bodyfile -- absolute path of the file written to disk containing
-                    the message body. This allows nPipes to write bodies to unique,
-                    randomized filenames to avoid collision with other files on disk.
-                    This variable (and only this one) is also expanded in the value
-                    of OutputChannel if it is of type OutputChannelFile. This allows
-                    you to let nPipes know that your command will write its output to
-                    a file with a name like $bodyfile.out
+       **${bodyfile}** -- absolute path of the file written to disk containing
+                      the message body. This allows nPipes to write bodies to
+                      unique, randomized filenames to avoid collision with other
+                      files on disk. This variable (and only this one) is also
+                      expanded in the value of OutputChannel if it is of type
+                      OutputChannelFile. This allows you to let nPipes know that
+                      your command will write its output to a file with a name
+                      like $bodyfile.out
 
-       $bodycontents -- the message body as a string
+       **${bodycontents}** -- the message body as a string
 
-       $headerfile -- absolute path of a file containing the Header of the current
-                      message. This is provided in case your transform logic needs to
-                      mutate the details of subsequent Steps in the message Header.
+       **${headerfile}** -- absolute path of a file containing the Header of
+                        the current message. This is provided in case your
+                        transform logic needs to mutate the details of
+                        subsequent Steps in the message Header.
     """
     def _toDict(self) = { "arglist": self.arglist,
                           "timeout": self.timeout,
@@ -299,10 +304,9 @@ data Step( id:str,
         return Step(id=d.get("id"),
                     trigger=Trigger._fromDict(d.get("trigger")),
                     command=Command._fromDict(d.get("command", {})),
-                    timeout=d.get("stepTimeout", 0),
-                    outputChannel=OutputChannel._fromDict(d.get("outputChannel"), {}),
+                    stepTimeout=d.get("stepTimeout", 0),
                     assets=fmap(Asset._fromDict, d.get("assets")),
-                    protocol=Protocol._fromDict(d.get("protocol")),
+                    protocol=Protocol._fromDict(d.get("protocol", {})),
                     description=d.get("description"))
 
 
