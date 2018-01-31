@@ -4,6 +4,7 @@ from typing import Tuple, NamedTuple, List, Dict, Union, Type, Any, Optional
 import subprocess
 import secrets
 import zipfile
+import string
 from pathlib import Path
 import distutils.dir_util
 
@@ -24,8 +25,7 @@ from outcome import Outcome, Success, Failure
 
 
 def localizeAssets(assets:Asset[]) -> Outcome:
-    # TODO: this fmap call should spawn threads and wait on them
-    outcomes = fmap(localizeAsset, assets)
+    outcomes = concurrent_map(localizeAsset, assets) |> list
     # TODO: Do something to reduce the Outcome_s
     return Success()
 
@@ -201,26 +201,6 @@ def runTrigger(trigger:Trigger) -> Outcome:
              triggerNextStep$(?, newHeader)
            )
 
-    # assetsLocalized = localizeAssets(step.assets)
-
-    # match Failure(reason) in assetsLocalized:
-    #     # TODO: ??? what to do if assets didn't localize?
-    #     #       at least log the reason, then:
-    #     return Failure(reason)
-
-    # command = expandCommand(step, msg.body)
-    # ran = runCommand(command, msg.body)
-
-    # case ran:
-    #     match Failure(reason):
-    #         # TODO: log it and what else?
-    #         return Failure(reason)
-    #     match Success(result):
-    #         triggerNextStep(result, newHeader)
-
-
-    # return Success()
-
 
 def triggerNextStep(result:Any, header:Header) -> Outcome:
     # peek the next step to determine its trigger type
@@ -232,11 +212,20 @@ def triggerNextStep(result:Any, header:Header) -> Outcome:
 
 def expandCommand(step:Step, body:str) -> Command:
     assets = step.assets
-    targetsForIds = ( (fmap(.id, assets), fmap(decideLocalTarget, assets))
+    targetsForIds = {} # type: Dict[str, str]
+    targetsForIds = ( (map(.id, assets), map(decideLocalTarget, assets))
                       |*> zip
                       |> dict )
+    targetsForIds["bodyfile"] = "TODO: Write body file and place name here"
+    targetsForIds["bodycontents"] = body
+    targetsForIds["headerfile"] = "TODO: Write header file and place name here"
 
-    # string replace on step.command to fill in assets and
-    # (file containing local message | message body contents)
-    # TODO: don't actually return this with no changes!
-    return step.command
+    # SECURITY: if lockCommand is True, ignore the command in message header.
+    # TODO: Is there a way to encode this into the type system?
+    # Eg., SecureCommand and UnsecureCommand could take different paths.
+    command = config.command if config.lockCommand else step.command
+
+    newargs = ( command.arglist |>
+                fmap$(s -> string.Template(s).safe_substitute(targetsForIds)) )
+
+    return command._with([(".arglist", newargs)])
