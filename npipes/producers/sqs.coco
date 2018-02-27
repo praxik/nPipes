@@ -1,0 +1,53 @@
+# -*- mode: python;-*-
+
+from typing import Generator, List
+import boto3
+import hashlib
+
+from ..message import Message
+from ..outcome import Outcome, Success, Failure
+from ..maybe import Maybe, Just, Nothing, maybe, fromMaybe
+from ..producer import Producer
+
+
+data ProducerSqs( queueName:str,
+                  maxNumberOfMessages:int=1
+                ) from Producer:
+
+    def messages(self) -> Generator[Message, Outcome, None]:
+        """Yields an (infinite) series of *Message*s by polling the specified
+           queue. When caller *send*s back *Success*, the message is deleted
+           from the queue; otherwise, the message is immediately made visible in
+           the queue so further processing attempts can be made.
+
+           WARNING: this function is intended to be used **only** with a *for* loop
+           or *map* operation. DO NOT use the idiom of capturing the value returned
+           by *generator.send(foo)*.
+        """
+        sqs = boto3.resource('sqs')
+        queue = sqs.get_queue_by_name(QueueName=self.queueName)
+        fake_message = Message() # type: ignore # reason: mypy can't handle Coconut default args
+
+        sqsMsgs: List[boto3.SQS.Message] = []
+        while True:
+            while not sqsMsgs:
+                sqsMsgs = queue.receive_messages(AttributeNames=['VisibilityTimeout'],
+                                                    MaxNumberOfMessages=self.maxNumberOfMessages,
+                                                    WaitTimeSeconds=20)
+            while sqsMsgs: # Allows changing MaxNumberOfMessages to > 1 for batching
+                sqsMsg = sqsMsgs.pop()
+                # TODO: inspect the message here and handle overflowed message
+                # stuff before parsing as a message
+                result = ( yield Message.fromStr(sqsMsg.body) )
+                case result:
+                    match s is Success:
+                        sqsMsg.delete()
+                    match f is Failure:
+                        sqsMsg.change_visibility(VisibilityTimeout=0)
+                        # Log the failure?  (f.reason)
+
+                # Calling `send` on a generator causes it to yield another value immediately,
+                # but we want this generator to advance only when `next` is called.
+                # This second yield emits an empty message, allowing consumers to `send`
+                # us a result without inadvertently advancing the generator.
+                yield fake_message

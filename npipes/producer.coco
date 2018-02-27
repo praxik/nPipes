@@ -1,0 +1,9 @@
+# -*- mode: python;-*-
+
+from typing import Generator, List
+from .outcome import Outcome
+from .message import Message
+
+class Producer:
+    def messages(self) -> Generator[Message, Outcome, None]:
+        pass

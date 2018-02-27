@@ -1,0 +1,6 @@
+mypy
+coconut
+
+requests
+boto3
+pyyaml

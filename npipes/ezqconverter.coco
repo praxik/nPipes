@@ -1,0 +1,93 @@
+# -*- mode: python;-*-
+
+from typing import Tuple, Type, NewType
+import yaml
+import pathlib
+import secrets
+
+from .header import (Header, Step, Trigger, TriggerGet, Uri, QueueName, TriggerSqs,
+                     ProtocolEZQ, Command, FilePath, OutputChannelFile,
+                     S3Asset, Decompression, AssetSettings)
+
+
+# BIG TODOS:
+# 1. file as body stuff -- this involves figuring out how nPipes is going
+#    to handle that in a general way, then converting the EZQ form into that
+# 2. running EZQ style commands on Windows. This may not be a big priority though.
+#    md worker is the only windows worker currently getting tasks from the web
+#    app. I control the code for everything else on windows.
+#
+# Using injection of cls = Message to break dep cycle. Downside is this
+# hides the Message and Body types, so we're not getting full benefit of
+# typechecking in this module.
+def convertFromEZQ(cls, s):
+    steps: List[Step] = []
+    ezqHeaderStr, bodyStr = s.split("\n...\n")
+    ezqHeader = yaml.safe_load(ezqHeaderStr)["EZQ"]
+
+    assets: List[Asset] = []
+    aindex = 0 # Monotonically-increasing id for Assets
+    for item in ezqHeader.get("get_s3_files", []):
+        assets.append(s3DictToAsset(item, aindex))
+        aindex += 1
+
+    # Use a Maybe here?
+    # TODO: implement whatever needs to happen around overflow bodies
+    bodyAsset = None
+    if ezqHeader.get("get_s3_file_as_body", False):
+        bodyAsset = s3DictToAsset(ezqHeader["get_s3_file_as_body"], aindex)
+
+    # For OutputChannel, EZQ assumed a file named "output_#{@id}.txt",
+    # where @id is the sqs :message_id
+    # Apps set to run under ezq mostly take a -o cmdline arg and expect
+    # the variable $id to be expanded into whatever is needed. So what we
+    # need to do here is choose an id, expand $id in the cmdStr, then
+    # set outfile to output_$id.txt
+    id = secrets.token_hex(4)
+    outfile = FilePath("output_{}.txt".format(id))
+
+    arglist = [""]
+    cmdStr = ezqHeader.get("process_command", False)
+    if cmdStr:
+        # EZQ handles commands as strings, and assumes a shell for invocation,
+        # so duplicate that here.
+        # TODO: How to handle on Windows?
+        ncs = cmdStr.replace("$id", id)
+        arglist = ["bash", "-c", ncs]
+
+    command = Command( arglist=arglist,
+                        outputChannel=OutputChannelFile(outfile))
+
+    firstStep = Step( id="0",
+                        trigger=TriggerGet(Uri("http://fake.fake")), # irrelevant
+                        command=command,
+                        assets=assets,
+                        protocol=ProtocolEZQ(), # Lets Processor know this was a converted
+                        # task so it can handle Command munging in an EZQ-compliant way
+                    )
+    steps.append(firstStep)
+
+    result_queue_name = ezqHeader.get("result_queue_name", False)
+    if result_queue_name:
+        # add a second step containing a TriggerSqs
+        # The Trigger is really the only thing that matters for this Step
+        steps.append(Step( id="1",
+                            trigger=TriggerSqs(QueueName(result_queue_name))))
+
+    return cls(Header(steps=steps), body=bodyStr)
+
+
+def s3DictToAsset(d, idint):
+    key = d["key"]
+    path = "s3://{bucket}/{key}".format( bucket=d["bucket"],
+                                            key=key)
+    decompress = d.get("decompress", False)
+    # EZQ specifies that .gz files *always* be decompressed,
+    # regardless of decompression flag
+    if pathlib.Path(key).suffix == ".gz":
+        decompress = True
+
+    dc = Decompression(decompress)
+    settings = AssetSettings( id="{}".format(idint),
+                                decompression=dc)
+    return S3Asset( path=path, settings=settings )

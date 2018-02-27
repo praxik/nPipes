@@ -1,0 +1,30 @@
+# -*- mode: python;-*-
+
+from ..message import Message
+from ..outcome import Outcome, Success, Failure
+
+from typing import Generator, List
+import boto3
+import hashlib
+
+
+def sendMessage(queuename, message) -> Outcome:
+    try:
+        sqs = boto3.resource('sqs')
+        queue = sqs.get_queue_by_name(QueueName=queuename)
+        body = message.toJsonStr()
+        # TODO: inspect length of body and decide whether overflow
+        # is required. If so, send to specified overflow location,
+        # mutate the message, and reserialize it before sending. Probably
+        # want to maintain an md5 of the overflowed body in the message
+        # as well so the receiving side can check that it has everything.
+        # Oh, but that's a pain in the ass with multipart uploads.
+        # Hmm. Oh, can set our own tag on objects in S3, so can use that.
+        md5 = body |> .encode("utf-8") |> hashlib.md5 |> .hexdigest()
+        response = queue.send_message(MessageBody=message.toJsonStr())
+        if response.get("MD5OfMessageBody") == md5:
+            return Success()
+        else:
+            return Failure("Enqueued message MD5 does not match what was sent")
+    except Exception as err:
+        return Failure("Unable to send SQS message: {}".format(err))

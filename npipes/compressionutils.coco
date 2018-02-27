@@ -1,0 +1,17 @@
+# -*- mode: python;-*-
+
+from gzip import compress, decompress
+from base64 import b64encode, b64decode
+
+
+def toGzB64(s:str) -> bytes:
+    """Convert a plain string to a base-64-encoded, gzipped bytes list;
+       inverse function of *fromGzB64*
+    """
+    s |> .encode("utf-8") |> compress |> b64encode
+
+def fromGzB64(b:bytes) -> str:
+    """Convert a base-64-encoded, gzipped bytes list to a plain string;
+       inverse function of *toGzB64*
+    """
+    b |> b64decode |> decompress |> bytes.decode

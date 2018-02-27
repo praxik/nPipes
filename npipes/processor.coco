@@ -5,32 +5,52 @@ import subprocess
 import secrets
 import zipfile
 import string
+import logging
 from pathlib import Path
 import distutils.dir_util
 
-from message import (
-    S3Path, Uri, Topic, Queuename, Body, Filepath,
-    TriggerSNS, TriggerSQS, TriggerGet, TriggerPost, TriggerLambda, Trigger,
-    S3Asset, UriAsset, Asset, AssetSettings, Decompression,
-    ProtocolEZQ, ProtocolNpipes, Protocol,
-    OutputChannelStdout, OutputChannelFile, OutputChannel,
+from .message import (
+    Body, Message,
+    peekStep, popStep, peekTrigger)
+
+from .header import (
+    S3Path, Uri, Topic, Queuename, Filepath,
+    Trigger, TriggerSns, TriggerSqs, TriggerGet, TriggerPost, TriggerLambda,
+    Asset, S3Asset, UriAsset, AssetSettings, Decompression,
+    Protocol, ProtocolEZQ, ProtocolNpipes,
+    OutputChannel, OutputChannelStdout, OutputChannelFile,
     Command,
-    Step, Header, Message,
-    peekStep, popStep, peekTrigger )
+    Step, Header)
 
-from serialize import toJson, fromJson
-
-from outcome import Outcome, Success, Failure
+from .producer import Producer
+from .serialize import toJson, fromJson
+from .outcome import Outcome, Success, Failure
+from .maybe import Maybe, Just, Nothing, maybe, fromMaybe
+from .triggers import sqs, sns, awsLambda, uri
 
 
 
 def localizeAssets(assets:Asset[]) -> Outcome:
+    """Localize (ie., download to local node and write to disk) a List of
+       Asset's according to the rules for each Asset type.
+       Returns Failure if localization fails for *any* Asset.
+    """
     outcomes = concurrent_map(localizeAsset, assets) |> list
-    # TODO: Do something to reduce the Outcome_s
-    return Success()
+    hasFailures = False
+    for oc, nm in zip(outcomes, map(str, assets)):
+        match Failure(reason) in oc: # type: ignore # destructuring matchers don't typecheck
+            logging.fatal("Fatal error localizing {}: {}".format(nm, reason))
+            hasFailures = True
+
+    if hasFailures:
+        return Failure("Unable to localize one or more assets")
+    else:
+        return Success()
 
 
 def localizeAsset(asset:Asset) -> Outcome:
+    """Localize a single Asset
+    """
     tempname = genUniqueAssetName(asset)
 
     return ( localizeAssetTyped(asset, tempname) >>
@@ -41,6 +61,9 @@ def localizeAsset(asset:Asset) -> Outcome:
 # went well. (That allows easier composition and chaining.)
 def localizeAssetTyped(S3Asset(path), target):
     # type: (Asset, str) -> Outcome
+    """Localize an Asset stored in S3; assumes AWS credentials exist in the
+       environment
+    """
     # TODO: do some stuff with boto
 
     return Success(target)
@@ -49,18 +72,29 @@ def localizeAssetTyped(S3Asset(path), target):
 @addpattern(localizeAssetTyped) # type: ignore
 def localizeAssetTyped(UriAsset(uri), target):
     # type: (UriAsset, str) -> Outcome
+    """Localize a standard URI Asset
+    """
     # TODO: do some stuff with requests.py
     return Success(target)
 
 
-
 def genUniqueAssetName(asset:Asset) -> str:
-    token = secrets.token_hex(8)
-    ext = getAssetRawExt(asset)
-    return "{}.{}".format(token, ext)
+    """Generate unique name for asset while keeping the asset's extension intact
+    """
+    return "{}.{}".format(randomName(), getAssetRawExt(asset))
+
+
+def randomName() -> str:
+    """Generate a filesystem-appropriate name with low chance of collision
+    """
+    return secrets.token_hex(8)
 
 
 def decompressIfRequired(fname:str, asset:Asset) -> Outcome:
+    """Invokes decompression if asset has been marked for decompression;
+       successful Outcome will contain the filename that should be used
+       for processing beyond this point
+    """
     if asset.settings.decompression.decompress:
         return decompress(fname)
     else:
@@ -68,6 +102,8 @@ def decompressIfRequired(fname:str, asset:Asset) -> Outcome:
 
 
 def decompress(path:str) -> Outcome:
+    """Chooses and invokes a decompressor based on file extension of path
+    """
     # TODO: - choose decompression method from filename
     #       - invoke decompressor
     #       - return path to decompressed file
@@ -75,21 +111,32 @@ def decompress(path:str) -> Outcome:
 
 
 def decompressZip(file:str) -> Outcome:
-    # Unzip into a temporary dir that can later be renamed as per localTarget
+    """Decompress ZipFile `file` into a unique dir
+    """
+    tmpdir = randomName()
     try:
         with zipfile.ZipFile(file) as z:
-            z.extractall()
-        return Success(file)
+            z.extractall(path=tmpdir)
+        Path(file).unlink() # Don't leave the uncompressed archive sitting around
+        return Success(tmpdir)
     except Exception as err:
+        if Path(tmpdir).exists(): # Clean up if things go wrong
+            distutils.dir_util.remove_tree(tmpdir)
+            Path(file).unlink()
         return Failure("Decompression error: {}".format(err))
 
 
 def decompressGzip(file:str) -> Outcome:
+    """Decompress a .gz or .tgz file.
+       ONLY decompresses; does NOT explode .tar.gz or .tgz!
+    """
     # TODO: Decompress and then return the decompressed file's name
     return Success(file)
 
 
 def renameToLocalTarget(fname:str, asset:Asset) -> Outcome:
+    """Rename an Asset to the requested localTarget
+    """
     target = decideLocalTarget(asset)
     targetPath = Path(target)
     try:
@@ -111,6 +158,9 @@ def renameToLocalTarget(fname:str, asset:Asset) -> Outcome:
 
 
 def getAssetRawExt(asset:Asset) -> str:
+    """Returns complete file extension on the *raw* identifier contained in
+       Asset; eg., https://my.domain.com/a_file.json.gz  ->  json.gz
+    """
     leaf = decideLocalTargetTyped(asset)
     ext = leaf |> .split('.') |> .[1:] |> '.'.join
     return ext
@@ -125,14 +175,16 @@ def decideLocalTarget(asset:Asset) -> str:
 
 def decideLocalTargetTyped(S3Asset(path)):
     # type: (Asset) -> str
-    # Remove protocol and bucket, returning *full* S3 key
+    """Remove protocol and bucket from path, returning *full* S3 key
+    """
     target = path |> .split('/') |> .[2:] |> '/'.join
     return target
 
 
 @addpattern(decideLocalTargetTyped) # type: ignore
 def decideLocalTargetTyped(UriAsset(uri)):
-    # Return everything past the last '/'
+    """Return everything in uri past the last '/'
+    """
     target = uri |> .split('/') |> .[-1]
     return target
 
@@ -180,34 +232,25 @@ def run(command:Command, input:Optional[bytes], timeout:int) -> Outcome:
         return Success(cp.stdout)
 
 
-# This should live inside each Trigger
-# def parseBlob(data:str) -> Message:
-#     pass
+def runMessageProducer(producer:Producer) -> None:
+    stream = producer.messages()
+    for msg in stream: # () -> Message
+        step, newHeader = popStep(msg.header)
 
+        result = ( localizeAssets(step.assets) >>
+                   (_ -> (expandCommand(step, msg.body) |>
+                          runCommand$(?, msg.body))) >>
+                   triggerNextStep$(?, newHeader)
+                 )
+        # Some Producers need to know whether we succeeded or failed
+        stream.send(result)
 
-def loopTrigger(trigger:Trigger) -> None:
-    # TODO: check value of state.run rather than constant True
-    while True:
-        runTrigger(trigger)
-
-
-def runTrigger(trigger:Trigger) -> Outcome:
-    msg = trigger.awaitMessage() # () -> Message
-    step, newHeader = popStep(msg.header)
-
-    return ( localizeAssets(step.assets) >>
-             (_ -> (expandCommand(step, msg.body) |>
-                    runCommand$(?, msg.body))) >>
-             triggerNextStep$(?, newHeader)
-           )
+        # TODO: check value of state.run and break out if False
+    return None
 
 
 def triggerNextStep(result:Any, header:Header) -> Outcome:
-    # peek the next step to determine its trigger type
-    # hand its trigger info and the result to an instance
-    # of the next trigger, and call ... whatever that method
-    # is called to send the message.
-    return Success()
+    return peekTrigger(header).sendMessage(result)
 
 
 def expandCommand(step:Step, body:str) -> Command:
@@ -229,3 +272,11 @@ def expandCommand(step:Step, body:str) -> Command:
                 fmap$(s -> string.Template(s).safe_substitute(targetsForIds)) )
 
     return command._with([(".arglist", newargs)])
+
+
+def main():
+    logging.basicConfig(filename="processor.log", level=logging.DEBUG)
+    # TODO:
+    # - parse config
+    # - set up env
+    # - call runTrigger with appropriate Trigger

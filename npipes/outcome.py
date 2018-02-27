@@ -1,5 +1,9 @@
 # -*- mode: python;-*-
 
+# TODO: Consider going back to using a Coconut data type for this.
+# The problem with the vanilla Python version is that it doesn't allow
+# for destructuring matches.
+
 from typing import Any, Callable, TypeVar
 
 T = TypeVar("T", bound="Outcome")

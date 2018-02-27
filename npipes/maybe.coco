@@ -1,0 +1,42 @@
+# -*- mode: python;-*-
+
+from typing import Any, Callable, TypeVar
+
+T = TypeVar("T", bound="Maybe")
+
+class Maybe:
+    # def __init__(self, value=None):
+    #     self.value = value
+
+    # Monadic bind
+    def bind(self: T, f: Callable) -> T:
+        """Monadic bind; chains together computations that comsume plain data
+           and emit a Maybe. In case of Nothing, simply returns Nothing.
+           In case of Just, applies `f` to the held value.
+        """
+        if isinstance(self, Just):
+            return f(self.value)
+        else: # isinstance Nothing
+            return self
+
+    # Override `>>` operator for use as infix bind
+    def __rshift__(self: T, f: Callable) -> T:
+        """Infix version of bind using `>>` operator. See documenation for
+           `bind` for more informaiton.
+        """
+        return self.bind(f)
+    pass
+
+
+data Nothing from Maybe
+data Just( value: Any ) from Maybe
+
+
+def maybe(default, _, Nothing()) = default
+@addpattern(maybe) # type: ignore
+def maybe(_, f, Just(x)) = f(x)
+
+
+def fromMaybe(default, Nothing()) = default
+@addpattern(fromMaybe) # type: ignore
+def fromMaybe(_, Just(x)) = x
