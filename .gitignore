@@ -5,5 +5,5 @@ private/
 tmp/
 jammy.zip
 locate.db
-
+.env
 
