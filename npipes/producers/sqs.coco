@@ -1,13 +1,14 @@
 # -*- mode: python;-*-
 
-from typing import Generator, List
+from typing import Generator, List, Dict
 import boto3
-import hashlib
 
 from ..message import Message
 from ..outcome import Outcome, Success, Failure
-from ..maybe import Maybe, Just, Nothing, maybe, fromMaybe
 from ..producer import Producer
+
+def createProducer(cliArgs:List[str], producerArgs:Dict) -> Producer:
+    return ProducerSqs(**producerArgs)
 
 
 data ProducerSqs( queueName:str,
@@ -32,22 +33,16 @@ data ProducerSqs( queueName:str,
         while True:
             while not sqsMsgs:
                 sqsMsgs = queue.receive_messages(AttributeNames=['VisibilityTimeout'],
-                                                    MaxNumberOfMessages=self.maxNumberOfMessages,
-                                                    WaitTimeSeconds=20)
+                                                 MaxNumberOfMessages=self.maxNumberOfMessages,
+                                                 WaitTimeSeconds=20)
             while sqsMsgs: # Allows changing MaxNumberOfMessages to > 1 for batching
                 sqsMsg = sqsMsgs.pop()
-                # TODO: inspect the message here and handle overflowed message
-                # stuff before parsing as a message
-                result = ( yield Message.fromStr(sqsMsg.body) )
+                with Message.fromStr(sqsMsg.body) as msg:
+                    result = yield msg
                 case result:
                     match s is Success:
                         sqsMsg.delete()
                     match f is Failure:
                         sqsMsg.change_visibility(VisibilityTimeout=0)
-                        # Log the failure?  (f.reason)
 
-                # Calling `send` on a generator causes it to yield another value immediately,
-                # but we want this generator to advance only when `next` is called.
-                # This second yield emits an empty message, allowing consumers to `send`
-                # us a result without inadvertently advancing the generator.
                 yield fake_message

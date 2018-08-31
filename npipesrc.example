@@ -1,0 +1,33 @@
+# nPipes does not directly use this config file; instead, nPipes pulls
+# *all* of its configuration from environment variables.  This file
+# can be used in conjunction with a script that runs at bootup or as a
+# wrapper around nPipes to lift these configuration items into
+# environment variables with matching names.
+
+# If message doesn't specify command to run, or if lockCommand (below)
+# is true, what should this processor run?
+NPIPES_command:
+
+# Always run the default command above; don't let messages override
+# the default
+NPIPES_lockCommand: false
+
+# Run function `validate` in the named module to validate the command
+# contained in a message; useful when you want lockCommand to be
+# false, but want to be able to constrain the allowable commands. The
+# named module must contain a top-level function named "validate"
+# which takes a single List (of strings) as its argument and returns
+# True if the command is good, or False if the command is bad.
+NPIPES_commandValidator: # some module name
+
+# Which Producer module are we going to run to get messages?
+# Module name must exist somewhere in your PYTHON_PATH
+NPIPES_producer: npipes.producers.sqs
+
+# keys should be exactly the same name (case-sensitive) as the name of
+# a producer's constructor arguments. The dict value of
+# NPIPES_producerArgs MUST be converted to a JSON string, then base-64
+# encoded before being stored in an environment variable
+NPIPES_producerArgs:  being stored as an environment variable
+  key1: val1
+  key2: val2

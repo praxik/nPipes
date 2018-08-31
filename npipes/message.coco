@@ -1,68 +1,99 @@
 # -*- mode: python;-*-
 
-from typing import Tuple, Type, NewType
+from typing import Tuple, Type, NewType, Union
 import json
 import yaml
 import pathlib
 import secrets
+from operator import methodcaller
+from contextlib import contextmanager
 
 from .serialize import Serializable, toJson
 from .header import (Header, Step, Trigger, TriggerGet, Uri, QueueName, TriggerSqs,
                      ProtocolEZQ, Command, FilePath, OutputChannelFile,
                      S3Asset, Decompression, AssetSettings, NestedStepListType)
+from .body import Body, BodyInString, BodyInAsset
 from .ezqconverter import convertFromEZQ
 
 ##############################################################################
 # Typealiases
 ##############################################################################
 
-Body = NewType("Body", str)
+# class Body(Serializable):
+#     def _fromDict(d):
+#         case d["type"].lower():
+#             match "string":
+#                 return BodyInString._fromDict(d)
+#             match "asset":
+#                 return BodyInAsset._fromDict(d)
+
+# data BodyInString(string:str) from Body:
+#     def _toDict(self) = {"type": "string", "string": self.string}
+#     def _fromDict(d) = BodyInString(string=d.get("string"))
+
+# data BodyInAsset(assetId:str) from Body:
+#     def _toDict(self) = {"type": "asset", "assetId": self.assetId}
+#     def _fromDict(d) = BodyInAsset(assetId=d.get("assetId"))
 
 
 ########################
 # Message
 ########################
 data Message( header:Header=Header(),
-              body:Body=Body("") ) from Serializable:
-    def _toDict(self) = { "header": self.header._toDict(),
-                          "body": self.body
-		        }
-    def _fromDict(d) = Message( body=d.get("body"),
-                                header=Header._fromDict(d.get("header")))
+              body:Body=BodyInString("") ) from Serializable:
+    def _toDict(self, meth=methodcaller("_toDict")) = {
+            "header": self.header |> meth,
+            "body": self.body |> meth
+	    }
+    def _fromDict(d) = Message( body=Body._fromDict(d.get("body", {})),
+                                header=Header._fromDict(d.get("header", {})))
 
-    # TODO: probably want an optimization option that creates a Header
-    # object with a single Step, one of each Asset type, etc., then walks the
-    # emitted dict for the fake Header and the real Header and removes all parts
-    # of the real Header that are equal to the fake one. That should allow for
-    # complicated Headers with lots of steps to be compacted greatly. Other
-    # option, I suppose, would be to gzip then base64encode the header line.
-    def toJsonLines(self) = "{header}\n{body}".
-                                format(header=toJson(self.header),
-                                       body=self.body)
+    def toJsonLines(self) = "{header}\n{body}".format(
+                              header=toJson(self.header),
+                              body=toJson(self.body))
 
     def fromJsonLines(s):
         # Header is a single JSON line; Body is remainder of string
         h, *t = s.splitlines()
         header = json.loads(h)
-        body = "\n".join(t)
+        body = json.loads("\n".join(t))
         return Message._fromDict({"header": header, "body": body})
 
+    @contextmanager
     def fromStr(s):
-        if s.startswith("---\nEZQ"):
-            return convertFromEZQ(Message, s)
-        else:
-            return Message.fromJsonLines(s)
+        """Contextmanager that yields a single message. The message should only
+           be considered valid within the context's scope. This is necessary in
+           order to allow conversion and management of the message resource
+           itself.
 
+           Ex:
+           with Message.fromStr("...") as msg:
+               # do stuff with msg
+               ...
+
+           # msg is now invalid
+        """
+        if s.startswith("---\nEZQ"):
+            with convertFromEZQ(Message, s) as convMess:
+                 yield convMess
+        else:
+            yield Message.fromJsonLines(s)
 
 
 ##############################################################################
 # Functions
 ##############################################################################
 
-def peekStep(Header(steps), n=0):
+# FIXME: This ignores the encoding...and that won't do unless
+# we are explicitly normalizing the encoding on initial contact somehow
+
+def peekStep(Header(_, steps), n=0):
     # type: (Header, int) -> Step
     """Returns the nth Step in header"""
-    return steps[n]
+    if len(steps) > n:
+        return steps[n]
+    else:
+        return Step()
 
 @addpattern(peekStep) # type: ignore
 def peekStep(Message(header, _), n=0):
@@ -71,18 +102,18 @@ def peekStep(Message(header, _), n=0):
     return peekStep(header, n)
 
 
+# def popStep(header:Header) -> Tuple[Union[Step, NestedStepListType], Header]:
 def popStep(header:Header) -> Tuple[Step, Header]:
     """Returns first Step in header, along with a new Header
        containing the remaining Step's"""
-    step = header.steps[0]
-    nh = Header(header.steps[1:])
+    step = peekStep(header)
+    nh = Header(header.encoding, header.steps[1:])
     return (step, nh)
 
-
-def peekTrigger(Header(steps), n=0):
+def peekTrigger(Header(_, _) as header, n=0):
     # type: (Header, int) -> Trigger
     """Returns the Trigger for the nth Step in header"""
-    return steps[n].trigger
+    return peekStep(header, n).trigger
 
 @addpattern(peekTrigger) # type: ignore
 def peekTrigger(Message(header, _), n=0):

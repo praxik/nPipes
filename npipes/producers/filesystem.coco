@@ -1,0 +1,73 @@
+# -*- mode: python;-*-
+
+import time
+from pathlib import Path
+from typing import Generator, List, Dict
+
+from ..message import Message
+from ..outcome import Outcome, Success, Failure
+from ..producer import Producer
+from ..utils.typeshed import pathlike
+
+
+def createProducer(cliArgs:List[str], producerArgs:Dict) -> Producer:
+    return ProducerFilesystem(**producerArgs)
+
+
+data ProducerFilesystem( dir:pathlike,
+                         removeSuccesses:bool=False,
+                         removeFailures:bool=False,
+                         refreshInterval:float=1.0,
+                         quitWhenEmpty:bool=False
+                       ) from Producer:
+    def messages(self) -> Generator[Message, Outcome, None]:
+        """Treats a filesystem directory as a queue, yielding the contents of
+           each normal file as a message. Tracks processed files to avoid
+           re-processing. "Polls" the "queue" indefinitely. Files are processed
+           oldest-first, according to filesystem mtime.
+
+	   When *removeSuccesses* is True, each message file is deleted after
+           being processed successfully. Default: False.
+
+           When *removeFailures* is True, each message file that **fails**
+           during processing is removed. Default: False.
+
+           Once all existing messages have been exhausted, "polls" *dir* every
+           *refreshInterval* seconds for new messages.
+
+           When *quitWhenEmpty* is True, only makes a single pass through the
+           directory, does not "poll" for new messages after that, and exits
+        """
+        fake_message = Message() # type: ignore
+
+        processed:List[Path] = []
+        while True:
+            files:List[Path] = ( Path(self.dir)
+                      |> .glob("*")
+                      |> filter$(.is_file())
+                      |> filter$(f -> f not in processed)
+                      |> sorted$(?, key=(f -> f.stat().st_mtime))
+                    )
+
+            for file in files:
+                with Message.fromStr(file |> .read_text()) as msg:
+                    result = yield msg
+                case result:
+                    match _ is Success:
+                        if self.removeSuccesses:
+                            file.unlink()
+                        else:
+                            processed += [file]
+                    match _ is Failure:
+                        if self.removeFailures:
+                            file.unlink()
+                        else:
+                            processed += [file]
+
+                # Required by intended usage semantics
+                yield fake_message
+
+            if self.quitWhenEmpty:
+                break
+
+            time.sleep(self.refreshInterval)

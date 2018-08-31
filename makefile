@@ -12,11 +12,13 @@ build: cocofiles pythonfiles
 	mkdir -p build
 	cp -r npipes/* build/.
 	$(PYTHON_EXE) `which coconut` --jobs sys -l -t $(PYTHON_TARGET_VER) build/. --mypy --ignore-missing-imports
+	#$(PYTHON_EXE) `which coconut` --jobs sys -l -t $(PYTHON_TARGET_VER) build/. 
 
-install: build
+install: build FORCE
 	mkdir -p install/npipes
 	mkdir -p install/npipes/producers
 	mkdir -p install/npipes/triggers
+	mkdir -p install/npipes/utils
 	cd build && find -type f -name '*.py' -exec cp '{}' ../install/npipes/'{}' ';' && cd ..
 	touch install/npipes/__init__.py
 
@@ -33,9 +35,8 @@ repl: FORCE
 
 FORCE: ;
 
-test: install
-	PYTHONPATH=install $(PYTHON_EXE) tests/processorTests.py
+test: install test-run
 
 test-run: 
-#	PYTHONPATH=install $(PYTHON_EXE) tests/processorTests.py
+	PYTHONPATH=install $(PYTHON_EXE) tests/processorTests.py
 	PYTHONPATH=install $(PYTHON_EXE) tests/serializeTests.py

@@ -4,7 +4,10 @@
 # The problem with the vanilla Python version is that it doesn't allow
 # for destructuring matches.
 
-from typing import Any, Callable, TypeVar
+# FIXME: The type annotations are really doing anything in here.
+# It all essentially collapses down to Any's all around. Needs more work.
+
+from typing import Any, Callable, TypeVar, Union, Generic, Optional
 
 T = TypeVar("T", bound="Outcome")
 

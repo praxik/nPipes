@@ -1,19 +1,21 @@
 # -*- mode: python;-*-
 
-from typing import NewType, List, Union
+from typing import NewType, List, Union, Any
+from operator import methodcaller
 
-from .serialize import Serializable
+from .serialize import Serializable, subtractDicts
+from .s3utils import S3Path
+
 
 
 ##############################################################################
 # Typealiases
 ##############################################################################
 
-S3Path = NewType("S3Path", str)
+# S3Path = NewType("S3Path", str)
 Uri = NewType("Uri", str)
 Topic = NewType("Topic", str)
 QueueName = NewType("QueueName", str)
-Body = NewType("Body", str)
 FilePath = NewType("FilePath", str)
 
 ##############################################################################
@@ -27,17 +29,21 @@ class Trigger(Serializable):
     def sendMessage(self, message):
         pass
     def _fromDict(d):
-        case d["type"].lower():
+        case d.get("type", "nothing").lower():
             match "sns":
                 return TriggerSns(Topic(d["topic"]))
             match "sqs":
-                return TriggerSqs(QueueName(d["queuename"]))
+                return TriggerSqs(QueueName(d["queueName"]))
             match "get":
                 return TriggerGet(Uri(d["uri"]))
             match "post":
                 return TriggerPost(Uri(d["uri"]))
             match "lambda":
                 return TriggerLambda(d["name"])
+            match "filesystem":
+                return TriggerFilesystem(d["dir"])
+            match _:
+                return TriggerNothing()
 
 # The inline imports for Trigger subclasses ensures that all heavy dependencies
 # on outside packages (requests, boto3, etc.) happen in the subclass modules.
@@ -52,39 +58,60 @@ class Trigger(Serializable):
 # _fromDict up there could call into each discovered trigger to attempt to deserialize
 # it. Sending would happen via a factory method followed by the call.
 data TriggerSns(topic:Topic) from Trigger:
-    def _toDict(self) = {"topic": self.topic, "type": "SNS"}
+    def _toDict(self, meth=methodcaller("_toDict")) = {"topic": self.topic, "type": "SNS"}
+    def _toMinDict(self) = self._toDict()
 
     def sendMessage(self, message):
         import triggers.sns
         return triggers.sns.sendMessage(self.topic, message)
 
 data TriggerSqs(queueName:QueueName) from Trigger:
-    def _toDict(self) = {"queueName": self.queueName, "type": "SQS"}
+    def _toDict(self, meth=methodcaller("_toDict")) = {"queueName": self.queueName, "type": "SQS"}
+    def _toMinDict(self) = self._toDict()
 
     def sendMessage(self, message):
         import triggers.sqs
         return triggers.sqs.sendMessage(self.queueName, message)
 
 data TriggerGet(uri:Uri) from Trigger:
-    def _toDict(self) = {"uri": self.uri, "type": "Get"}
+    def _toDict(self, meth=methodcaller("_toDict")) = {"uri": self.uri, "type": "Get"}
+    def _toMinDict(self) = self._toDict()
 
     def sendMessage(self, message):
         import triggers.uri
         return triggers.uri.sendMessageGet(self.uri, message)
 
 data TriggerPost(uri:Uri) from Trigger:
-    def _toDict(self) = {"uri": self.uri, "type": "Post"}
+    def _toDict(self, meth=methodcaller("_toDict")) = {"uri": self.uri, "type": "Post"}
+    def _toMinDict(self) = self._toDict()
 
     def sendMessage(self, message):
         import triggers.uri
         return triggers.uri.sendMessagePost(self.uri, message)
 
 data TriggerLambda(name:str) from Trigger:
-    def _toDict(self) = {"name": self.name, "type": "Lambda"}
+    def _toDict(self, meth=methodcaller("_toDict")) = {"name": self.name, "type": "Lambda"}
+    def _toMinDict(self) = self._toDict()
 
     def sendMessage(self, message):
         import triggers.awsLambda
         return triggers.awsLambda.sendMessage(self.name, message)
+
+data TriggerFilesystem(dir:str) from Trigger:
+    def _toDict(self, meth=methodcaller("_toDict")) = {"dir": self.dir, "type": "Filesystem"}
+    def _toMinDict(self) = self._toDict()
+
+    def sendMessage(self, message):
+        import npipes.triggers.filesystem
+        return npipes.triggers.filesystem.sendMessage(self.dir, message)
+
+data TriggerNothing() from Trigger:
+    """TriggerNothing triggers nothing."""
+    def _toDict(self, meth=methodcaller("_toDict")) = {"type": "Nothing"}
+    def _toMinDict(self) = self._toDict()
+
+    def sendMessage(self, _):
+        return Success()
 
 
 ########################
@@ -94,12 +121,11 @@ data TriggerLambda(name:str) from Trigger:
 # Using wrapper class rather than raw bool since more options may be needed later.
 data Decompression( decompress:bool=False,
 		  ) from Serializable:
-    def _toDict(self) = dict(self._asdict())
-    def _fromDict(d) = Decompression( decompress=d.get("decompress"),
-                                    )
+    def _toDict(self, meth=methodcaller("_toDict")) = dict(self._asdict())
+    def _fromDict(d) = Decompression( decompress=d.get("decompress", False))
 
 
-data AssetSettings( id:str,
+data AssetSettings( id:str="",
                     decompression:Decompression=Decompression(),
                     localTarget:str=""
 	          ) from Serializable:
@@ -114,13 +140,13 @@ data AssetSettings( id:str,
     2. The default local target associated with a particular Asset type is used.
        See documentation for individual Asset types.
     """
-    def _toDict(self) = { "id": self.id,
-                          "decompression": self.decompression._toDict(),
+    def _toDict(self, meth=methodcaller("_toDict")) = { "id": self.id,
+                          "decompression": self.decompression |> meth,
 			  "localTarget": self.localTarget
 			}
     def _fromDict(d) = AssetSettings( id=d.get("id"),
-                                      decompression=Decompression._fromDict((d.get("decompression"))),
-                                      localTarget=d.get("localTarget"))
+                                      decompression=Decompression._fromDict((d.get("decompression", {}))),
+                                      localTarget=d.get("localTarget", ""))
 
 
 ########################
@@ -153,11 +179,15 @@ data S3Asset( path:S3Path,
        everything beyond s3://bucket/ is used as part of the local filename
        (unless an explicit localTarget is set in the AssetSettings).
     """
-    def _toDict(self) = { "path": self.path,
+    def _toDict(self, meth=methodcaller("_toDict")) = { "path": str(self.path),
                           "type": "S3",
-                          "settings": self.settings._toDict() }
+                          "settings": self.settings |> meth }
+    def _toMinDict(self):
+        md = self._toDict()
+        md["settings"] = self.settings._toMinDict()
+        return md
     def _fromDict(d) = S3Asset( path=S3Path(d.get("path")),
-                                settings=AssetSettings._fromDict(d.get("settings")))
+                                settings=AssetSettings._fromDict(d.get("settings", {})))
 
 data UriAsset( uri:Uri,
                settings:AssetSettings ) from Asset:
@@ -171,11 +201,15 @@ data UriAsset( uri:Uri,
        unwieldy filename, it is highly recommended to explicitly set a
        localTarget in the AssetSettings.
     """
-    def _toDict(self) = { "uri": self.uri,
+    def _toDict(self, meth=methodcaller("_toDict")) = { "uri": self.uri,
                           "type": "Uri",
-                          "settings": self.settings._toDict() }
-    def _fromDict(d) = UriAsset( path=Uri(d.get("uri")),
-                                 settings=AssetSettings._fromDict(d.get("settings")))
+                          "settings": self.settings |> meth }
+    def _toMinDict(self):
+        md = self._toDict()
+        md["settings"] = self.settings._toMinDict()
+        return md
+    def _fromDict(d) = UriAsset( uri=Uri(d.get("uri")),
+                                 settings=AssetSettings._fromDict(d.get("settings", {})))
 
 
 ########################
@@ -187,17 +221,19 @@ class Protocol(Serializable):
        ProtocolEZQ (deprecated, available for backward compatibility)
     """
     def _fromDict(d):
-        case d.lower():
+        case d.get("value", "npipes").lower():
             match "ezq":
                 return ProtocolEZQ()
             match "npipes":
                 return ProtocolNpipes()
 
 data ProtocolEZQ from Protocol:
-    def _toDict(self) = "EZQ"
+    def _toDict(self, meth=methodcaller("_toDict")) = {"value": "EZQ"}
+    def _toMinDict(self) = self._toDict()
 
 data ProtocolNpipes from Protocol:
-    def _toDict(self) = "npipes"
+    def _toDict(self, meth=methodcaller("_toDict")) = {"value": "npipes"}
+    # def _toMinDict(self) = self._toDict()
 
 
 ########################
@@ -209,21 +245,23 @@ class OutputChannel(Serializable):
        OutputChannelFile indicates a named file on disk.
     """
     def _fromDict(d):
-        case d.get("type").lower():
+        case d.get("type", "stdout").lower():
             match "stdout":
                 return OutputChannelStdout()
             match "file":
                 return OutputChannelFile(FilePath(d.get("filepath")))
 
 data OutputChannelStdout from OutputChannel:
-    def _toDict(self) = {"type": "Stdout"}
+    def _toDict(self, meth=methodcaller("_toDict")) = {"type": "Stdout"}
+    def _toMinDict(self) = self._toDict()
 
 data OutputChannelFile( filepath:FilePath=FilePath("${unique}") ) from OutputChannel:
     """Specifies that nPipes should pick up processing results from a named file
-       on disk. Filenames can be either relative or absolute paths, and will be
-       treated accordingly. If nPipes should instead generate a unique filename
-       for output, set the filepath to the string "${unique}". This will cause nPipes
-       to do TWO things:
+       on disk. The file will be read as text. Filenames can be either relative
+       or absolute paths, and will be treated accordingly.
+
+       If nPipes should instead generate a unique filename for output, set the
+       filepath to the string "${unique}". This will cause nPipes to do TWO things:
        1. Generate a unique filename and substitute it for the filepath
        2. Substitute all references to "${outputfile}" in the Command's arglist
           with this unique filename
@@ -231,7 +269,8 @@ data OutputChannelFile( filepath:FilePath=FilePath("${unique}") ) from OutputCha
        Since this unique output file generation is usually what you want (really,
        you do), this is the default setting of filepath.
     """
-    def _toDict(self) = {"filepath": self.filepath, "type": "File"}
+    def _toDict(self, meth=methodcaller("_toDict")) = {"filepath": self.filepath, "type": "File"}
+    def _toMinDict(self) = self._toDict()
 
 
 
@@ -281,6 +320,11 @@ data Command( arglist:List[str]=[""], # Command exe and all args as *separate* s
 
        **${bodycontents}** -- the message body as a string
 
+       **${escapedbodycontents}** -- as above, but escaped to allow passing through
+                        a shell. Unless you're explicitly using the shell hack
+                        mentioned in the very first paragraph of this docstring, you
+                        probably don't need this variable.
+
        **${headerfile}** -- absolute path of a file containing the Header of
                         the current message. This is provided in case your
                         transform logic needs to mutate the details of
@@ -289,13 +333,18 @@ data Command( arglist:List[str]=[""], # Command exe and all args as *separate* s
        **${outputfile}** -- this variable is expanded to the contents of
                         the filepath in OutputChannelFile. See that class for more
                         information.
+
+       **${pid}** -- Integer pid of the nPipes process. Commands can use this
+                     to set up separate sandbox directories in case they are not
+                     designed to be run in a multi-process architecture. This is
+                     important when multiple nPipes processes are being run on a single
+                     machine in the same userspace.
     """
-    def _toDict(self) = { "arglist": self.arglist,
+    def _toDict(self, meth=methodcaller("_toDict")) = { "arglist": self.arglist,
                           "timeout": self.timeout,
                           "inputChannelStdin": self.inputChannelStdin,
-                          "outputChannel": self.outputChannel._toDict()
+                          "outputChannel": self.outputChannel |> meth
                         }
-
     def _fromDict(d):
         return Command(arglist=d.get("arglist",[""]),
                        timeout=d.get("timeout", 0),
@@ -306,8 +355,8 @@ data Command( arglist:List[str]=[""], # Command exe and all args as *separate* s
 ########################
 # Step
 ########################
-data Step( id:str,
-           trigger:Trigger,
+data Step( id:str="NPIPES_EMPTY",
+           trigger:Trigger=TriggerNothing(),
            command:Command=Command(),
 	   stepTimeout:int=0,
            assets:Asset[]=[],
@@ -316,33 +365,35 @@ data Step( id:str,
 	 ) from Serializable:
     """Describes a single processing Step in a pipeline.
 
-    **id**: Unique id to allow searching for this Step
-    **trigger**: How do we trigger this Step?
-    **command**: Command to run for this step; overrides the command baked
-		into the worker iff lockCommand is False on the worker
+    **id**:          Unique id to allow searching for this Step; "NPIPES_EMPTY"
+                     is reserved
+    **trigger**:     How do we trigger this Step?
+    **command**:     Command to run for this step; overrides the command baked
+                     into the worker iff lockCommand is False on the worker
     **stepTimeout**: Allow *Step* to consume at most this much clock time
-		    (seconds); 0 means no timeout
-    **assets**: Non-local file assets that Command expects to find locally
-    **protocol**: Does this Step run on the old EZQ protocol or the new
-		Netpipes one?
+	             (seconds); 0 means no timeout
+    **assets**:      Non-local file assets that Command expects to find locally
+    **protocol**:    Does this Step run on the old EZQ protocol or the new
+		     Netpipes one?
     **description**: What does this Step do?
     """
-    def _toDict(self) = { "id": self.id,
-                          "trigger": self.trigger._toDict(),
-			  "command": self.command._toDict(),
+    def _toDict(self, meth=methodcaller("_toDict")) = {
+                          "id": self.id,
+                          "trigger": self.trigger |> meth,
+                          "command": self.command |> meth,
                           "stepTimeout": self.stepTimeout,
-			  "assets": fmap(._toDict(), self.assets),
-			  "protocol": self.protocol._toDict(),
-			  "description": self.description
+                          "assets": fmap(meth, self.assets),
+                          "protocol": self.protocol |> meth,
+                          "description": self.description
 			}
     def _fromDict(d):
         return Step(id=d.get("id"),
-                    trigger=Trigger._fromDict(d.get("trigger")),
+                    trigger=Trigger._fromDict(d.get("trigger",{})),
                     command=Command._fromDict(d.get("command", {})),
                     stepTimeout=d.get("stepTimeout", 0),
-                    assets=fmap(Asset._fromDict, d.get("assets")),
+                    assets=fmap(Asset._fromDict, d.get("assets", [])),
                     protocol=Protocol._fromDict(d.get("protocol", {})),
-                    description=d.get("description"))
+                    description=d.get("description", ""))
 
 
 ########################
@@ -355,17 +406,19 @@ class Encoding(Serializable):
        a likely place to specify signing and encryption of headers and bodies.
     """
     def _fromDict(d):
-        case d["type"].lower():
+        case d.get("type", "plaintext").lower():
             match "plaintext":
                 return EncodingPlainText()
             match "gzb64":
                 return EncodingGzB64()
 
-def EncodingPlainText from Encoding:
-    def _toDict(self) = return {"type": "plaintext"}
+data EncodingPlainText from Encoding:
+    def _toDict(self, meth=methodcaller("_toDict")) = {"type": "plaintext"}
+    def _toMinDict(self) = self._toDict()
 
-def EncodingGzB64 from Encoding:
-    def _toDict(self) = return {"type": "gzb64"}
+data EncodingGzB64 from Encoding:
+    def _toDict(self, meth=methodcaller("_toDict")) = {"type": "gzb64"}
+    def _toMinDict(self) = self._toDict()
 
 ########################
 # Header
@@ -377,7 +430,13 @@ def EncodingGzB64 from Encoding:
 # etc. It allows you to nest Lists of Steps to indicate parallel pipelines.
 # We bottom out to an Any because mypy doesn't currently support recursive
 # types.
-
+#
+# This type is not good enough. Needs to be able to handle a type like this:
+# [Step, [[Step, Step], [Step, Step]], Step]
+# so a List of: Step, List[Step], or List[List[Step]]
+# It's a complicated type. It will also need a separate tool to
+# convert a list of steps to a graphviz `dot` diagram for easy visual
+# checking that complicated pipelines are specified correctly.
 NestedStepListType = List[ Union[ Step,
                                   List[ Union[ Step,
                                                List[ Union[ Step,
@@ -385,6 +444,9 @@ NestedStepListType = List[ Union[ Step,
                                                           ]]]]]]
 
 data Header( encoding:Encoding=EncodingPlainText(),
-             steps:List[Union[Step, List[Step]]]=[]) from Serializable:
-    def _toDict(self) = {"steps": fmap(._toDict(), self.steps)}
-    def _fromDict(d) = Header(steps=fmap(Step._fromDict, d.get("steps")))
+             #steps:List[Union[Step, List[Step]]]=[]) from Serializable:
+             steps:List[Step]=[]) from Serializable:
+    def _toDict(self, meth=methodcaller("_toDict")) = { "encoding": self.encoding |> meth,
+                          "steps": fmap(meth, self.steps)}
+    def _fromDict(d) = Header( encoding=Encoding._fromDict(d.get("encoding", {})),
+                               steps=fmap(Step._fromDict, d.get("steps", [])))

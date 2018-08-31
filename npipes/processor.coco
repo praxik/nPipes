@@ -1,222 +1,60 @@
 # -*- mode: python;-*-
 
-from typing import Tuple, NamedTuple, List, Dict, Union, Type, Any, Optional
+from typing import Tuple, NamedTuple, List, Dict, Union, Type, Any, Optional, Sequence
 import subprocess
-import secrets
-import zipfile
 import string
 import logging
 from pathlib import Path
-import distutils.dir_util
 
 from .message import (
-    Body, Message,
+    Body, BodyInString, BodyInAsset, Message,
     peekStep, popStep, peekTrigger)
 
 from .header import (
-    S3Path, Uri, Topic, Queuename, Filepath,
+    Asset,
     Trigger, TriggerSns, TriggerSqs, TriggerGet, TriggerPost, TriggerLambda,
-    Asset, S3Asset, UriAsset, AssetSettings, Decompression,
-    Protocol, ProtocolEZQ, ProtocolNpipes,
     OutputChannel, OutputChannelStdout, OutputChannelFile,
     Command,
-    Step, Header)
+    Step, Header, NestedStepListType)
 
+from .assets import localizeAssets, decideLocalTarget, randomName
+from .configuration import Configuration
+from .serialize import toJson
 from .producer import Producer
-from .serialize import toJson, fromJson
 from .outcome import Outcome, Success, Failure
-from .maybe import Maybe, Just, Nothing, maybe, fromMaybe
-from .triggers import sqs, sns, awsLambda, uri
+from .utils.iteratorextras import exhaust
+from .utils.typeshed import pathlike
+from .utils.autodeleter import AutoDeleter
 
 
+# Probably going to move into some sort of Factory / Service Discovery setup:
+from .producers.sqs import ProducerSqs
+# from .producers.yyy import ProducerY
 
-def localizeAssets(assets:Asset[]) -> Outcome:
-    """Localize (ie., download to local node and write to disk) a List of
-       Asset's according to the rules for each Asset type.
-       Returns Failure if localization fails for *any* Asset.
-    """
-    outcomes = concurrent_map(localizeAsset, assets) |> list
-    hasFailures = False
-    for oc, nm in zip(outcomes, map(str, assets)):
-        match Failure(reason) in oc: # type: ignore # destructuring matchers don't typecheck
-            logging.fatal("Fatal error localizing {}: {}".format(nm, reason))
-            hasFailures = True
-
-    if hasFailures:
-        return Failure("Unable to localize one or more assets")
-    else:
-        return Success()
-
-
-def localizeAsset(asset:Asset) -> Outcome:
-    """Localize a single Asset
-    """
-    tempname = genUniqueAssetName(asset)
-
-    return ( localizeAssetTyped(asset, tempname) >>
-             decompressIfRequired$(?, asset) >>
-             renameToLocalTarget$(?, asset) )
-
-# These localizeAssetTyped patterns *must* return Success(target) if all
-# went well. (That allows easier composition and chaining.)
-def localizeAssetTyped(S3Asset(path), target):
-    # type: (Asset, str) -> Outcome
-    """Localize an Asset stored in S3; assumes AWS credentials exist in the
-       environment
-    """
-    # TODO: do some stuff with boto
-
-    return Success(target)
-
-
-@addpattern(localizeAssetTyped) # type: ignore
-def localizeAssetTyped(UriAsset(uri), target):
-    # type: (UriAsset, str) -> Outcome
-    """Localize a standard URI Asset
-    """
-    # TODO: do some stuff with requests.py
-    return Success(target)
-
-
-def genUniqueAssetName(asset:Asset) -> str:
-    """Generate unique name for asset while keeping the asset's extension intact
-    """
-    return "{}.{}".format(randomName(), getAssetRawExt(asset))
-
-
-def randomName() -> str:
-    """Generate a filesystem-appropriate name with low chance of collision
-    """
-    return secrets.token_hex(8)
-
-
-def decompressIfRequired(fname:str, asset:Asset) -> Outcome:
-    """Invokes decompression if asset has been marked for decompression;
-       successful Outcome will contain the filename that should be used
-       for processing beyond this point
-    """
-    if asset.settings.decompression.decompress:
-        return decompress(fname)
-    else:
-        return Success(fname)
-
-
-def decompress(path:str) -> Outcome:
-    """Chooses and invokes a decompressor based on file extension of path
-    """
-    # TODO: - choose decompression method from filename
-    #       - invoke decompressor
-    #       - return path to decompressed file
-    return Success(path)
-
-
-def decompressZip(file:str) -> Outcome:
-    """Decompress ZipFile `file` into a unique dir
-    """
-    tmpdir = randomName()
-    try:
-        with zipfile.ZipFile(file) as z:
-            z.extractall(path=tmpdir)
-        Path(file).unlink() # Don't leave the uncompressed archive sitting around
-        return Success(tmpdir)
-    except Exception as err:
-        if Path(tmpdir).exists(): # Clean up if things go wrong
-            distutils.dir_util.remove_tree(tmpdir)
-            Path(file).unlink()
-        return Failure("Decompression error: {}".format(err))
-
-
-def decompressGzip(file:str) -> Outcome:
-    """Decompress a .gz or .tgz file.
-       ONLY decompresses; does NOT explode .tar.gz or .tgz!
-    """
-    # TODO: Decompress and then return the decompressed file's name
-    return Success(file)
-
-
-def renameToLocalTarget(fname:str, asset:Asset) -> Outcome:
-    """Rename an Asset to the requested localTarget
-    """
-    target = decideLocalTarget(asset)
-    targetPath = Path(target)
-    try:
-        targetPath.parent.mkdir(parents=True, exist_ok=True)
-        if targetPath.name is not ".":
-            Path(fname).rename(targetPath)
-        else:
-            # FIXME: I don't like this. Python does not have a good library function
-            # to recursively move files. Should write my own to avoid unnecessary disk
-            # use in this copy all then delete all process.
-            if Path(fname).is_dir():
-                distutils.dir_util.copy_tree(fname, target)
-                distutils.dir_util.remove_tree(fname)
-            else:
-                return Failure("Unable to rename a file to {}".format(targetPath))
-        return Success(target)
-    except Exception as err:
-        return Failure("Error renaming to local target {}: {}".format(target, err))
-
-
-def getAssetRawExt(asset:Asset) -> str:
-    """Returns complete file extension on the *raw* identifier contained in
-       Asset; eg., https://my.domain.com/a_file.json.gz  ->  json.gz
-    """
-    leaf = decideLocalTargetTyped(asset)
-    ext = leaf |> .split('.') |> .[1:] |> '.'.join
-    return ext
-
-
-def decideLocalTarget(asset:Asset) -> str:
-    if asset.settings.localTarget:
-        return asset.settings.localTarget
-    else:
-        return decideLocalTargetTyped(asset)
-
-
-def decideLocalTargetTyped(S3Asset(path)):
-    # type: (Asset) -> str
-    """Remove protocol and bucket from path, returning *full* S3 key
-    """
-    target = path |> .split('/') |> .[2:] |> '/'.join
-    return target
-
-
-@addpattern(decideLocalTargetTyped) # type: ignore
-def decideLocalTargetTyped(UriAsset(uri)):
-    """Return everything in uri past the last '/'
-    """
-    target = uri |> .split('/') |> .[-1]
-    return target
-
-
-# command vars should be expanded prior to calling this function!
-def runCommand(command:Command, body:str) -> Outcome:
-    # TODO: Push this onto another thread and periodically examine state.run
-    # to handle early exit
-    timeout = None if command.timeout is 0 else command.timeout
-
-    input = body.encode("utf-8") if command.inputChannelStdin else None
-
-    return ( run(command, input, timeout) >>
-             scrapeOutput$(command)
-           )
+# This file is largely organized according to a "dependencies first" rule.
+# Control flow starts near the *bottom* of the file, and moves upward as needed.
 
 
 def scrapeOutput(command:Command, cmdstdout:str) -> Outcome:
     case command.outputChannel:
         match OutputChannelStdout():
             result = Success(cmdstdout) # type: Outcome
-        match OutputChannelFile(filepath): # type: ignore # <- expanded code is type unstable
-            # TODO: read in file? Set result to a dict? Have a hook to send file
-            #       somewhere like S3?
-            # Presumably something in here could fail and return a Failure...
-            result = Success(filepath)
+        match OutputChannelFile(filepath): # type: ignore
+            p = Path(filepath)
+            if p.is_file():
+                result = Success(p.read_text())
+            else:
+                result = Failure("Output file {} does not exist".format(filepath))
     else:
         result = Failure("Unknown type of OutputChannel")
     return result
 
 
-def run(command:Command, input:Optional[bytes], timeout:int) -> Outcome:
+def runProcess(command:Command, input:Optional[bytes], timeout:int) -> Outcome:
+    """Runs command in a new process and returns Outcome containing stdout as
+       a stringin case of Succees, or stdout and stderr as a string in case of
+       Failure
+    """
     try:
         cp = subprocess.run(command.arglist, input=input, timeout=timeout,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -227,56 +65,146 @@ def run(command:Command, input:Optional[bytes], timeout:int) -> Outcome:
 
     if cp.returncode is not 0:
         return Failure("Exit code: {}\nstdout: {}\nstderr: {}".format(
-                                cp.returncode, cp.stdout, cp.stderr))
+                        cp.returncode, cp.stdout.decode(), cp.stderr.decode()))
     else:
-        return Success(cp.stdout)
+        return Success(cp.stdout.decode())
 
 
-def runMessageProducer(producer:Producer) -> None:
-    stream = producer.messages()
-    for msg in stream: # () -> Message
-        step, newHeader = popStep(msg.header)
+def runCommand(command:Command, body:str) -> Outcome:
+    """Runs a command with pre-expanded tokens. Handles logic of monitoring for
+       early exit.
+    """
+    # TODO: Push this onto another thread and periodically examine state.run
+    # to handle early exit
+    timeout = None if command.timeout is 0 else command.timeout
 
-        result = ( localizeAssets(step.assets) >>
-                   (_ -> (expandCommand(step, msg.body) |>
-                          runCommand$(?, msg.body))) >>
-                   triggerNextStep$(?, newHeader)
-                 )
-        # Some Producers need to know whether we succeeded or failed
-        stream.send(result)
+    input = body.encode("utf-8") if command.inputChannelStdin else None
 
-        # TODO: check value of state.run and break out if False
-    return None
+    return ( runProcess(command, input, timeout) >>
+             scrapeOutput$(command)
+           )
 
 
-def triggerNextStep(result:Any, header:Header) -> Outcome:
-    return peekTrigger(header).sendMessage(result)
+def toUniqueFile(data:str) -> str:
+    filename = randomName()
+    Path(filename).write_text(data)
+    return filename
 
-
-def expandCommand(step:Step, body:str) -> Command:
-    assets = step.assets
-    targetsForIds = {} # type: Dict[str, str]
-    targetsForIds = ( (map(.id, assets), map(decideLocalTarget, assets))
-                      |*> zip
-                      |> dict )
-    targetsForIds["bodyfile"] = "TODO: Write body file and place name here"
-    targetsForIds["bodycontents"] = body
-    targetsForIds["headerfile"] = "TODO: Write header file and place name here"
-
-    # SECURITY: if lockCommand is True, ignore the command in message header.
-    # TODO: Is there a way to encode this into the type system?
-    # Eg., SecureCommand and UnsecureCommand could take different paths.
-    command = config.command if config.lockCommand else step.command
+# TODO: add to this: timeout
+# There is a lot of logic going on in here. Would be nice to break it up a bit more.
+def expandCommand(command:Command,
+                  assets:Asset[],
+                  body:str,
+                  bodyfile,
+                  headerfile,
+                  outputfile,
+                  pid) -> Command:
+    """Expands token variables in a *Command*'s *arglist*
+    """
+    targetsForIds = {"bodyfile"    : bodyfile,
+                     "bodycontents": body,
+                     "headerfile"  : headerfile,
+                     "outputfile"  : outputfile,
+                     "pid"         : pid}
+    # Add asset markers into the dict
+    targetsForIds.update( (map(.settings.id, assets), map(decideLocalTarget, assets))
+                          |*> zip
+                          |> dict )
 
     newargs = ( command.arglist |>
                 fmap$(s -> string.Template(s).safe_substitute(targetsForIds)) )
 
+    # Special thing #1: we don't want to generate an escaped string unless requested
+    # since bodycontents may be large and we don't want to duplicate it unnecessarily
+    if any(fmap(arg -> "${escapedbodycontents}" in arg, newargs)):
+        ebc = {"bodycontents": repr(body)}
+        newargs = fmap(s -> string.Template(s).safe_substitute(ebc), newargs)
+
+    # Special thing #2: OutputFileChannel is the other place that can carry a
+    # command var
+    if isinstance(command.outputChannel, OutputChannelFile):
+        fp = ( string.Template(command.outputChannel.filepath)
+                     .safe_substitute({"bodyfile", bodyfile}) )
+        command = command._with([".outputChannel.filepath", fp])
+
     return command._with([(".arglist", newargs)])
 
 
-def main():
-    logging.basicConfig(filename="processor.log", level=logging.DEBUG)
-    # TODO:
-    # - parse config
-    # - set up env
-    # - call runTrigger with appropriate Trigger
+def triggerNextStep(result:Any, header:Header) -> Outcome:
+    # Will get more complicated once parallel pipelines are added
+    return peekTrigger(header).sendMessage(result)
+
+
+def extractBodyInString(body:BodyInString) -> str:
+    return body.string
+
+
+def extractBodyInAsset(body:BodyInAsset, assets:Asset[]) -> str:
+    for asset in assets:
+        if body.assetId == asset.settings.id:
+            with open(decideLocalTarget(asset)) as f:
+                return f.read()
+    return ""
+
+
+def extractBody(body:Body, assets:Asset[]) -> str:
+    """Extract the contents of a *Body* as a string
+    """
+    if isinstance(body, BodyInString):
+        return extractBodyInString(body)
+    elif isinstance(body, BodyInAsset):
+        return extractBodyInAsset(body, assets)
+    else:
+        return ""
+
+
+def chooseCommand(config:Configuration, command:Command) -> Command:
+    """Chooses between the command specified in the original configuation
+       and the one passed in. Currently just based on command locking,
+       but in future could be expanded allow cryptographic signing to
+       override the locking.
+    """
+    if config.lockCommand:
+        return config.command
+    else:
+        return command
+
+
+def handleMessage(config, msg):
+    """Handles a single *Message*
+    """
+    step, newHeader = popStep(msg.header)
+
+    lao = localizeAssets(step.assets)
+    if isinstance(lao, Failure):
+        result = lao
+    else:
+        with AutoDeleter() as deleter:
+            body = extractBody(msg.body, step.assets)
+            bodyfile = toUniqueFile(body) |> deleter.add
+            headerfile = toUniqueFile(toJson(msg.header)) |> deleter.add
+            outputfile = randomName() |> deleter.add
+            map(deleter.add, lao.value) |> exhaust
+
+            result = ( ( chooseCommand(config, step.command)
+                         |> expandCommand$(?, step.assets, body, bodyfile,
+                                           headerfile, outputfile, config.pid)
+                         |> runCommand$(?, body) )
+                       >> triggerNextStep$(?, newHeader) )
+    return result
+
+
+def runMessageProducer(config:Configuration, producer:Producer) -> None:
+    """Runs a message *Producer* as a stream
+    """
+    stream = producer.messages()
+    for msg in stream: # () -> Message
+        result = handleMessage(config, msg)
+
+        stream.send(result)
+
+        if isinstance(result, Failure):
+            logging.fatal(result.reason)
+
+        # TODO: check value of state.run and break out if False
+    return None
