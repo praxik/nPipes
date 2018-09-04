@@ -2,9 +2,9 @@
 
 import unittest
 
-from npipes.header import *
-from npipes.message import *
-
+from npipes.message.header import *
+from npipes.message.message import *
+from npipes.assethandlers.s3utils import S3Path
 
 class SerializeTestCase(unittest.TestCase):
 
@@ -24,7 +24,7 @@ class SerializeTestCase(unittest.TestCase):
         self.assertEqual(step2, Step._fromDict(step2._toMinDict()))
 
     def test_toMinDict3(self):
-        s3 = S3Asset("s3://bucket/key_1", AssetSettings("asset_a"))
+        s3 = S3Asset(S3Path("s3://bucket/key_1"), AssetSettings("asset_a"))
         expected = {"path": "s3://bucket/key_1",
                     "type": "S3",
                     "settings": {"id": "asset_a"}}

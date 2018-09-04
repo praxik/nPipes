@@ -3,9 +3,9 @@
 from typing import Generator, List, Dict
 import boto3
 
-from ..message import Message
+from ..message.message import Message
 from ..outcome import Outcome, Success, Failure
-from ..producer import Producer
+from .producer import Producer
 
 def createProducer(cliArgs:List[str], producerArgs:Dict) -> Producer:
     return ProducerSqs(**producerArgs)

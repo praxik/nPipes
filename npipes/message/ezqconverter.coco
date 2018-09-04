@@ -12,8 +12,8 @@ from .header import (Header, Step, Trigger, TriggerGet, Uri, QueueName, TriggerS
                      S3Asset, Decompression, AssetSettings)
 
 from .body import (BodyInString, BodyInAsset)
-from .utils.autodeleter import autoDeleteFile
-from .assets import randomName
+from ..utils.autodeleter import autoDeleteFile
+from ..assethandlers.assets import randomName
 
 
 # Using injection of cls = Message to break dep cycle. Downside is this

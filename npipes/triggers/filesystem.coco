@@ -2,9 +2,9 @@
 
 from pathlib import Path
 
-from ..message import Message
+from ..message.message import Message
 from ..outcome import Outcome, Success, Failure
-from ..assets  import randomName
+from ..assethandlers.assets  import randomName
 
 
 def sendMessage(dir, message) -> Outcome:

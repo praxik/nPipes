@@ -4,9 +4,9 @@ import argparse
 import sys
 from typing import Generator, List, Dict
 
-from ..message import Message
+from ..messages.message import Message
 from ..outcome import Outcome, Success, Failure
-from ..producer import Producer
+from .producer import Producer
 
 
 def createProducer(cliArgs:List[str], producerArgs:Dict) -> Producer:

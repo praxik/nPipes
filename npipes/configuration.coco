@@ -2,8 +2,8 @@
 
 import os
 
-from .serialize import *
-from .header    import Command
+from .serialize         import *
+from .message.header    import Command
 
 # Notice we do not serialize/deserialize the *pid* field.
 # We treat it as part of the Configuration for reproduceability

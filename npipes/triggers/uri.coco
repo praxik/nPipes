@@ -1,6 +1,6 @@
 # -*- mode: python;-*-
 
-from ..message import Message
+from ..message.message import Message
 from ..outcome import Outcome, Success, Failure
 
 

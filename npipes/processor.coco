@@ -6,29 +6,31 @@ import string
 import logging
 from pathlib import Path
 
-from .message import (
+from .message.message import (
     Body, BodyInString, BodyInAsset, Message,
     peekStep, popStep, peekTrigger)
 
-from .header import (
+from .message.header import (
     Asset,
     Trigger, TriggerSns, TriggerSqs, TriggerGet, TriggerPost, TriggerLambda,
     OutputChannel, OutputChannelStdout, OutputChannelFile,
+    Encoding, EncodingPlainText, EncodingGzB64,
     Command,
-    Step, Header, NestedStepListType)
+    Step, Header)
 
-from .assets import localizeAssets, decideLocalTarget, randomName
+from .assethandlers.assets import localizeAssets, decideLocalTarget, randomName
 from .configuration import Configuration
 from .serialize import toJson
-from .producer import Producer
+from .producers.producer import Producer
 from .outcome import Outcome, Success, Failure
 from .utils.iteratorextras import exhaust
 from .utils.typeshed import pathlike
 from .utils.autodeleter import AutoDeleter
+from .utils.compressionutils import fromGzB64
 
 
 # Probably going to move into some sort of Factory / Service Discovery setup:
-from .producers.sqs import ProducerSqs
+# from .producers.sqs import ProducerSqs
 # from .producers.yyy import ProducerY
 
 # This file is largely organized according to a "dependencies first" rule.
@@ -136,7 +138,10 @@ def triggerNextStep(result:Any, header:Header) -> Outcome:
 
 
 def extractBodyInString(body:BodyInString) -> str:
-    return body.string
+    if isinstance(body.encoding, EncodingPlainText):
+        return body.string
+    else: # must be EncodingGzB64
+       return body.string.encode() |> fromGzB64
 
 
 def extractBodyInAsset(body:BodyInAsset, assets:Asset[]) -> str:

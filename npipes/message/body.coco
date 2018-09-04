@@ -2,7 +2,7 @@
 
 from operator import methodcaller
 
-from .serialize import Serializable
+from ..serialize import Serializable
 from .header import Encoding, EncodingPlainText, EncodingGzB64
 
 class Body(Serializable):
@@ -14,7 +14,7 @@ class Body(Serializable):
                 return BodyInAsset._fromDict(d)
 
 data BodyInString(string:str,
-                  encoding=EncodingPlainText) from Body:
+                  encoding=EncodingPlainText()) from Body:
     def _toDict(self, meth=methodcaller("_toDict")) = {
             "type": "string",
             "string": self.string,

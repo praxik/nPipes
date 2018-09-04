@@ -1,11 +1,11 @@
 # -*- mode: python;-*-
 
-from ..message import Message
+from ..message.message import Message
 from ..outcome import Outcome, Success, Failure
-from ..body import Body, BodyInString, BodyInAsset
-from ..header import Encoding, EncodingPlainText, EncodingGzB64, S3Asset, AssetSettings, Decompression
-from ..assets import randomName
-from ..s3utils import S3Path, uploadData
+from ..message.body import Body, BodyInString, BodyInAsset
+from ..message.header import Encoding, EncodingPlainText, EncodingGzB64, S3Asset, AssetSettings, Decompression
+from ..assethandlers.assets import randomName
+from ..assethandlers.s3utils import S3Path, uploadData
 
 from typing import Generator, List
 import boto3
@@ -21,15 +21,9 @@ def sendMessage(queuename, message) -> Outcome:
         # FIXME: Temporary AF!
         overflowPath = ""
         messageBody = overflow(message, overflowPath) |> .toJsonLines()
-        # TODO: inspect length of body and decide whether overflow
-        # is required. If so, send to specified overflow location,
-        # mutate the message, and reserialize it before sending. Probably
-        # want to maintain an md5 of the overflowed body in the message
-        # as well so the receiving side can check that it has everything.
-        # Oh, but that's a pain in the ass with multipart uploads.
-        # Hmm. Oh, can set our own tag on objects in S3, so can use that.
-
-
+        # Probably want to maintain an md5 of the overflowed body in
+        # the message as well so the receiving side can check that it
+        # has everything.
         md5 = messageBody |> .encode("utf-8") |> hashlib.md5 |> .hexdigest()
         response = queue.send_message(MessageBody=messageBody)
         if response.get("MD5OfMessageBody") == md5:
@@ -42,15 +36,13 @@ def sendMessage(queuename, message) -> Outcome:
 def overflow(message:Message, overflowPath:str) -> Message:
     # If body is already in an asset, there's nothing we can do here.
     body = Message.body
-    if isinstance(body, BodyInString):  # Lets mypy know we have the type we claim to have
-
+    if isinstance(body, BodyInString):
         # SQS accepts messages up to 256kB (262,144 B), *including* the SQS
         # header data. The size of the SQS header is unspecified, but is
         # unlikely to be > 2,144B ... probably maybe. Hence the choice of 260000 here:
         overAmount = len(message.toJsonLines().encode()) - 260000
         if overAmount > 0:
-            # OK. Message is too big to fit in SQS. Don't panic. We can handle this.
-            # We're going to try two things:
+            # Message is too big to fit in SQS. Try two things:
             # 1. gzip the base64encode the body string. If that gets us
             #    under the bar, then we go with that. NOTE: gzip, not plain zlib,
             #    so bytes can be written to file as proper .gz
@@ -63,12 +55,10 @@ def overflow(message:Message, overflowPath:str) -> Message:
             # So...did the compression get us under the threshold?
             if len(b64BodyBytes) < (overAmount - 23): # 23 is the add'l bytes occupied
                                                       # by the now-nec. encoding info
-            # Yes! that did it! Pack it up and ship it out!
-            # Make a BodyInString with b64gz encoding
                 newBody = BodyInString(b64BodyBytes.decode(), encoding=EncodingGzB64())
                 return message._with([(".body", newBody)])
             else:
-            # Have to overflow to S3
+                # Have to overflow to S3
                 fname = randomName()
                 s3Path = S3Path.fromString(overflowPath).add(fname)
                 uploadData(gzBodyBytes, s3Path)

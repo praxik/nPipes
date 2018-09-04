@@ -7,9 +7,9 @@ from itertools import chain
 from pathlib import Path
 
 from npipes.processor import *
-from npipes.message import *
+from npipes.message.message import *
 from npipes.outcome import *
-from npipes.header import *
+from npipes.message.header import *
 from npipes.producers.filesystem import ProducerFilesystem
 
 class ProcessorTestCase(unittest.TestCase):

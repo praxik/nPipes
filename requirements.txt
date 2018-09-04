@@ -4,3 +4,4 @@ coconut
 requests
 boto3
 pyyaml
+dataclasses

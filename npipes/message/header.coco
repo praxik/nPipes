@@ -1,10 +1,12 @@
 # -*- mode: python;-*-
 
-from typing import NewType, List, Union, Any
+from typing import NewType, List, Union, Any, NamedTuple
 from operator import methodcaller
 
-from .serialize import Serializable, subtractDicts
-from .s3utils import S3Path
+# from dataclasses import dataclass
+
+from ..serialize import Serializable, subtractDicts
+from ..assethandlers.s3utils import S3Path
 
 
 
@@ -167,6 +169,10 @@ class Asset(Serializable):
             match "uri":
                 return UriAsset._fromDict(d)
 
+# @dataclass(frozen=True)
+# class S3Asset(Asset):
+#     path: S3Path
+#     settings: AssetSettings
 data S3Asset( path:S3Path,
               settings:AssetSettings ) from Asset:
     """An asset, stored in S3.

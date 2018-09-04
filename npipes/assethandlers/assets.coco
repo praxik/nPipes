@@ -9,12 +9,12 @@ from pathlib import Path
 import distutils.dir_util
 
 
-from .header import (
+from ..message.header import (
     Uri, Topic, QueueName, FilePath,
     Asset, S3Asset, UriAsset, AssetSettings, Decompression)
 
-from .outcome import Outcome, Success, Failure
-from .utils.iteratorextras import flatten, nth
+from ..outcome import Outcome, Success, Failure
+from ..utils.iteratorextras import flatten, nth
 # TODO: move s3path into its own module to avoid depending on boto just to get a path type
 from .s3utils import S3Path
 

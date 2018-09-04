@@ -11,7 +11,7 @@ from importlib import import_module
 from pathlib   import Path
 
 from .configuration import Configuration
-from .producer      import Producer
+from .producers.producer      import Producer
 from .processor     import runMessageProducer
 
 

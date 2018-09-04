@@ -1,72 +1,14 @@
 # -*- mode: python;-*-
-from typing import Union, AnyStr, Optional
+from typing import Union, AnyStr
 import pathlib
 import hashlib
 import boto3
 
-from .outcome import Outcome, Success, Failure
-from .utils.typeshed import pathlike
+from ..outcome import Outcome, Success, Failure
+from ..utils.typeshed import pathlike
+from .s3path import S3Path
 
 
-# I don't like that I can't put proper type annotations on the static function inside
-# here. Maybe just need to move the data type into its own module and declare the
-# function as free function? That kind of gets the namespacing situation sorted out.
-class S3Path:
-    """Represents path to an object in AWS S3.
-       Two accessible properties: bucket, key; both are strings (str)
-       Use str(my_s3_path) to get a nice "s3://bucket/key" string representation.
-
-       Can be instantiated in 3 different ways:
-
-       # copy constructor:
-       new_s3_path = S3Path(old_s3_path)
-
-       # bucket and key strings:
-       s3_path = S3Path("bucket", "key")
-
-       # bucket and key pathlib.Path's:
-       s3_path = S3Path(Path("bucket"), Path("key"))
-    """
-    def __init__(self, a:Union[S3Path, pathlike], k:Optional[pathlike]=None) -> None:
-        if k:
-            if isinstance(a, str) or isinstance(a, pathlib.Path):
-                self.bucket = str(a)
-                self.key = str(k)
-            else:
-                raise TypeError("When k is provided, a must be either a str or a pathlib.Path")
-        else:
-            if isinstance(a, S3Path):
-                self.bucket = a.bucket
-                self.key = a.key
-            else:
-                _, pth = str(a).split("://")
-                bucket, *keyParts = pth.split("/")
-                self.bucket = bucket
-                self.key = "/".join(keyParts)
-
-
-    # def from(path):
-    #     """Get a new S3Path from either a *str* or an existing *S3Path*
-    #     """
-    #     if isinstance(path, str):
-    #         return S3Path.fromString(path)
-    #     else:
-    #         return S3Path(path.bucket, path.key)
-
-    # def fromString(path):
-    #     _, pth = path.split("://")
-    #     bucket, *keyParts = pth.split("/")
-    #     return S3Path(bucket,
-    #                   keyParts |> "/".join )
-
-    def add(self, path:str) -> S3Path:
-        """Adds a new "filename" onto end of path
-        """
-        return S3Path(self.bucket,
-                      self.key |> pathlib.Path |> .joinpath(path) )
-
-    def __str__(self):
-        return "s3://{}/{}".format(self.bucket, self.key)
 
 
 # -> Outcome[str, pathlike]

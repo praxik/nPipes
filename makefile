@@ -19,6 +19,8 @@ install: build FORCE
 	mkdir -p install/npipes/producers
 	mkdir -p install/npipes/triggers
 	mkdir -p install/npipes/utils
+	mkdir -p install/npipes/message
+	mkdir -p install/npipes/assethandlers
 	cd build && find -type f -name '*.py' -exec cp '{}' ../install/npipes/'{}' ';' && cd ..
 	touch install/npipes/__init__.py
 

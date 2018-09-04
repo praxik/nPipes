@@ -5,8 +5,8 @@ import json
 from os import environ
 
 from typing import Generator, List, Dict
-from .outcome import Outcome, Success, Failure
-from .message import Message
+from ..outcome import Outcome, Success, Failure
+from ..message.message import Message
 
 
 def envLower(key:str) -> Dict:
