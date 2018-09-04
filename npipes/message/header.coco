@@ -6,7 +6,7 @@ from operator import methodcaller
 # from dataclasses import dataclass
 
 from ..serialize import Serializable, subtractDicts
-from ..assethandlers.s3utils import S3Path
+from ..assethandlers.s3path import S3Path
 
 
 

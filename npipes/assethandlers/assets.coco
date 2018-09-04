@@ -15,8 +15,7 @@ from ..message.header import (
 
 from ..outcome import Outcome, Success, Failure
 from ..utils.iteratorextras import flatten, nth
-# TODO: move s3path into its own module to avoid depending on boto just to get a path type
-from .s3utils import S3Path
+from .s3path import S3Path
 
 
 def localizeAssets(assets:Asset[]) -> Outcome:

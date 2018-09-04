@@ -1,8 +1,10 @@
 # -*- mode: python;-*-
-from typing import Union, Optional
+from typing import Union, Optional, TypeVar, Type
 import pathlib
 
 from ..utils.typeshed import pathlike
+
+T = TypeVar("T", bound="S3Path")
 
 class S3Path:
     """Represents path to an object in AWS S3.
@@ -20,7 +22,7 @@ class S3Path:
        # bucket and key pathlib.Path's:
        s3_path = S3Path(Path("bucket"), Path("key"))
     """
-    def __init__(self, a:Union[S3Path, pathlike], k:Optional[pathlike]=None) -> None:
+    def __init__(self, a:Union[T, pathlike], k:Optional[pathlike]=None) -> None:
         if k:
             if isinstance(a, str) or isinstance(a, pathlib.Path):
                 self.bucket = str(a)
@@ -40,11 +42,15 @@ class S3Path:
     def __eq__(self, other):
         return str(self) == str(other)
 
-    def add(self, path:str) -> S3Path:
+    def add(self:T, path:str) -> T:
         """Adds a new "filename" onto end of path
         """
-        return S3Path(self.bucket,
-                      pathlib.Path(self.key).joinpath(path) )
+        # This confusing stuff with cls is because we can't refer directly to
+        # S3Path as a type, and we can't use the S3Path ctor here and still
+        # typecheck.
+        cls = self.__class__
+        return cls(self.bucket,
+                   pathlib.Path(self.key).joinpath(path) )
 
     def __str__(self):
         return "s3://{}/{}".format(self.bucket, self.key)

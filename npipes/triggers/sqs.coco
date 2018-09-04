@@ -5,7 +5,8 @@ from ..outcome import Outcome, Success, Failure
 from ..message.body import Body, BodyInString, BodyInAsset
 from ..message.header import Encoding, EncodingPlainText, EncodingGzB64, S3Asset, AssetSettings, Decompression
 from ..assethandlers.assets import randomName
-from ..assethandlers.s3utils import S3Path, uploadData
+from ..assethandlers.s3utils import uploadData
+from ..assethandlers.s3path import S3Path
 
 from typing import Generator, List
 import boto3
