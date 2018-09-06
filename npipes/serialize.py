@@ -76,7 +76,7 @@ class Serializable:
         for path, val in paths:
             dval = val._toDict() if isinstance(val, Serializable) else val
             node = d
-            headkeys + [lastkey] = path.split('.')[1:] # type: ignore
+            *headkeys, lastkey = path.split('.')[1:] # type: ignore
             for key in headkeys:
                 node = node.get(key)
             node[lastkey] = dval
@@ -92,31 +92,31 @@ def subtractDicts(a, b):
 
 def toJson(x:Serializable) -> str:
     """Serialiazes a `Serializable` instance to JSON"""
-    return x |> ._toDict() |> json.dumps$(separators=(',',':'))
+    return json.dumps(x._toDict(), separators=(',',':'))
 
 
 def toMinJson(x:Serializable) -> str:
     """Serializes to JSON, while omitting all keys where x does not differ
        from the default-constructed instance of x
     """
-    return x |> ._toMinDict() |> json.dumps$(separators=(',',':'))
+    return json.dumps(x._toMinDict(), separators=(',',':'))
 
 
 def fromJson(jsonstr:Union[str,bytes, bytearray], typ:Type[Serializable]) -> Serializable:
     """Deserializes `jsonstr` into an instance of `typ`"""
-    return jsonstr |> json.loads |> typ._fromDict
+    return typ._fromDict(json.loads(jsonstr))
 
 
 if HAS_YAML:
     def toYaml(x:Serializable) -> str:
         """Serialiazes a `Serializable` instance to YAML"""
-        return x |> ._toDict() |> yaml.safe_dump
+        return yaml.safe_dump(x._toDict())
 
     def toMinYaml(x:Serializable) -> str:
         """Serialiazes a `Serializable` instance to YAML, while omitting all keys
            where x does not differ from the default-constructed instance of x"""
-        return x |> ._toMinDict() |> yaml.safe_dump
+        return yaml.safe_dump(x._toMinDict())
 
     def fromYaml(yamlstr:str, typ:Type[Serializable]) -> Serializable:
         """Deserializes `yamlstr` into an instance of `typ`"""
-        return yamlstr |> yaml.load |> typ._fromDict
+        return typ._fromDict(yaml.load(yamlstr))

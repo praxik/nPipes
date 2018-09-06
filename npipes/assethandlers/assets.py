@@ -1,8 +1,10 @@
 # -*- mode: python;-*-
 
-from typing import Tuple, NamedTuple, List, Dict, Union, Type, Any, Optional
+from typing import Tuple, NamedTuple, List, Dict, Union, Type, Any, Optional, Sequence
 import secrets
 import zipfile
+import gzip
+import shutil
 import string
 import logging
 from pathlib import Path
@@ -13,32 +15,32 @@ from ..message.header import (
     Uri, Topic, QueueName, FilePath,
     Asset, S3Asset, UriAsset, AssetSettings, Decompression)
 
-from ..outcome import Outcome, Success, Failure
-from ..utils.iteratorextras import flatten, nth
+from ..outcome import Outcome, Success, Failure, onFailure, filterMapSucceeded
+from ..utils.fp import concurrentMap
 from .s3path import S3Path
 
 
-def localizeAssets(assets:Asset[]) -> Outcome:
+def localizeAssets(assets:Sequence[Asset]) -> Outcome:
     """Localize (ie., download to local node and write to disk) a List of
        Asset's according to the rules for each Asset type.
        Cleans up and returns Failure if localization fails for *any* Asset.
        Returns a list of local targets inside a Success if everything succeeded.
     """
-    outcomes = concurrent_map(localizeAsset, assets) |> list
-    hasFailures = False
-    for oc, nm in zip(outcomes, map(str, assets)):
-        if isinstance(oc, Failure):
-            logging.fatal("Fatal error localizing {}: {}".format(nm, oc.reason))
-            hasFailures = True
-
-    if hasFailures:
-        # Cleanup
-        for outcome in outcomes:
-            if isinstance(outcome, Success):
-                Path(outcome.value).unlink()
+    # concurrentMap could easily support a timeout if we want to add a blanket T.O.
+    outcomes = concurrentMap(localizeAsset, assets)
+    if any(map(lambda oc: isinstance(oc, Failure), outcomes)):
+        logFailures(outcomes, assets)
+        # Clean up the successful downloads
+        filterMapSucceeded(lambda p: Path(p).unlink(), outcomes)
         return Failure("Unable to localize one or more assets")
     else:
-        return Success(map(.value, outcomes) |> list)
+        return Success(list(map(lambda oc: oc.value, outcomes)))
+
+
+def logFailures(outcomes:Sequence[Outcome], assets:Sequence[Asset]) -> None:
+    for oc, nm in zip(outcomes, map(str, assets)):
+        for reason in onFailure(oc):
+            logging.fatal("Fatal error localizing {}: {}".format(nm, reason))
 
 
 def localizeAsset(asset:Asset) -> Outcome:
@@ -47,35 +49,36 @@ def localizeAsset(asset:Asset) -> Outcome:
     tempname = genUniqueAssetName(asset)
 
     return ( localizeAssetTyped(asset, tempname) >>
-             decompressIfRequired$(?, asset) >>
-             renameToLocalTarget$(?, asset) )
+             (lambda name: decompressIfRequired(name, asset)) >>
+             (lambda name: renameToLocalTarget(name, asset)) )
 
 # These localizeAssetTyped patterns *must* return Success(target) if all
 # went well. (That allows easier composition and chaining.) We start with
 # a fake method so we can selectively attach new @addpattern versions to it
 # based on available imports.
-def localizeAssetTyped(None):
-    pass
+def localizeAssetTyped(asset:Asset, target:str) -> Outcome:
+    if isinstance(asset, S3Asset):
+        return localizeS3Asset(asset, target)
+    elif isinstance(asset, UriAsset):
+        return localizeUriAsset(asset, target)
+    else:
+        return Failure("Unknown Asset type {}".format(type(asset)))
 
 # Boto is large, so don't assume s3 utils are available:
 try:
     from . import s3utils
-    @addpattern(localizeAssetTyped) # type: ignore
-    def localizeAssetTyped(S3Asset(path, _), target):
-        # type: (Asset, str) -> Outcome
+    def localizeS3Asset(asset:S3Asset, target:str) -> Outcome:
         """Localize an Asset stored in S3; assumes AWS credentials exist in the
         environment
         """
-        return s3utils.downloadFile(path, target)
+        return s3utils.downloadFile(asset.path, target)
 except ImportError:
     pass # Won't be able to handle S3Assets
 
 
 try:
     import requests
-    @addpattern(localizeAssetTyped) # type: ignore
-    def localizeAssetTyped(UriAsset(uri, _), target):
-        # type: (UriAsset, str) -> Outcome
+    def localizeUriAsset(asset:UriAsset, target:str) -> Outcome:
         """Localize a standard URI Asset
         """
         # TODO: do some stuff with requests.py
@@ -111,13 +114,13 @@ def decompress(path:str) -> Outcome:
     """Chooses and invokes a decompressor based on file extension of path
     """
     pth = Path(path)
-    case pth.suffix:
-        match ".zip":
-            return decompressZip(path)
-        match ".gz":
-            return decompressGzip(path)
-
-    return Failure("Unable to determine decompressor from file extension")
+    suff = pth.suffix
+    if suff == ".zip":
+        return decompressZip(path)
+    elif suff == ".gz":
+        return decompressGzip(path)
+    else:
+        return Failure("Unable to determine decompressor from file extension")
 
 
 def decompressZip(file:str) -> Outcome:
@@ -140,9 +143,16 @@ def decompressGzip(file:str) -> Outcome:
     """Decompress a .gz or .tgz file.
        ONLY decompresses; does NOT explode .tar.gz or .tgz!
     """
-    # TODO: Decompress and then return the decompressed file's name
-    raise NotImplementedError
-    return Success(file)
+    try:
+        target = Path(file).stem
+        if Path(file).suffix == ".tgz":
+            target += ".tar"
+        with gzip.open(file, "rb") as src:
+            with open(target, "wb+") as dst:
+                shutil.copyfileobj(src, dst)
+        return Success(target)
+    except Exception as err:
+        return Failure("decompressGzip failed with {}".format(err))
 
 
 def renameToLocalTarget(fname:str, asset:Asset) -> Outcome:
@@ -173,7 +183,7 @@ def getAssetRawExt(asset:Asset) -> str:
        Asset; eg., https://my.domain.com/a_file.json.gz  ->  json.gz
     """
     leaf = decideLocalTargetTyped(asset)
-    ext = leaf |> .split('.') |> .[1:] |> '.'.join
+    ext = ".".join( leaf.split(".")[1:] )
     return ext
 
 
@@ -184,17 +194,22 @@ def decideLocalTarget(asset:Asset) -> str:
         return decideLocalTargetTyped(asset)
 
 
-def decideLocalTargetTyped(S3Asset(path, _)):
-    # type: (Asset) -> str
-    """Remove protocol and bucket from path, returning *full* S3 key
+def decideLocalTargetTyped(asset:Asset) -> str:
+    if isinstance(asset, S3Asset):
+        return decideLocalTargetS3Asset(asset)
+    elif isinstance(asset, UriAsset):
+        return decideLocalTargetUriAsset(asset)
+    else:
+        return "thisShouldNotExist"
+
+
+def decideLocalTargetS3Asset(asset:S3Asset) -> str:
+    """Returns just the S3 key
     """
-    target = path |> .split('/') |> .[3:] |> '/'.join
-    return target
+    return S3Path(asset.path).key
 
 
-@addpattern(decideLocalTargetTyped) # type: ignore
-def decideLocalTargetTyped(UriAsset(uri, _)):
+def decideLocalTargetUriAsset(asset:UriAsset) -> str:
     """Return everything in uri past the last '/'
     """
-    target = uri |> .split('/') |> .[-1]
-    return target
+    return asset.uri.split('/')[-1]

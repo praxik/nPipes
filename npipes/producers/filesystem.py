@@ -3,6 +3,7 @@
 import time
 from pathlib import Path
 from typing import Generator, List, Dict
+from dataclasses import dataclass
 
 from ..message.message import Message
 from ..outcome import Outcome, Success, Failure
@@ -14,12 +15,14 @@ def createProducer(cliArgs:List[str], producerArgs:Dict) -> Producer:
     return ProducerFilesystem(**producerArgs)
 
 
-data ProducerFilesystem( dir:pathlike,
-                         removeSuccesses:bool=False,
-                         removeFailures:bool=False,
-                         refreshInterval:float=1.0,
-                         quitWhenEmpty:bool=False
-                       ) from Producer:
+@dataclass(frozen=True)
+class ProducerFilesystem(Producer):
+    dir:pathlike
+    removeSuccesses:bool=False
+    removeFailures:bool=False
+    refreshInterval:float=1.0
+    quitWhenEmpty:bool=False
+
     def messages(self) -> Generator[Message, Outcome, None]:
         """Treats a filesystem directory as a queue, yielding the contents of
            each normal file as a message. Tracks processed files to avoid
@@ -42,27 +45,34 @@ data ProducerFilesystem( dir:pathlike,
 
         processed:List[Path] = []
         while True:
-            files:List[Path] = ( Path(self.dir)
-                      |> .glob("*")
-                      |> filter$(.is_file())
-                      |> filter$(f -> f not in processed)
-                      |> sorted$(?, key=(f -> f.stat().st_mtime))
-                    )
+
+            # Fake Successes to hack decent pipelining into Python
+            # files = ( Success(Path(self.dir))
+            #           >> (lambda p: Success(p.glob("*")))
+            #           >> (lambda g: Success(filter(lambda f: f.is_file(), g)))
+            #           >> (lambda fs: Success(filter(lambda f: f not in processed, fs)))
+            #           >> (lambda fs: Success(sorted(fs, key=(lambda f: f.stat().st_mtime))))
+            #         ).value
+
+            files:List[Path] = sorted(
+                filter(lambda f: f not in processed,
+                       filter(lambda f: f.is_file(),
+                              Path(self.dir).glob("*"))),
+                key=(lambda f: f.stat().st_mtime))
 
             for file in files:
-                with Message.fromStr(file |> .read_text()) as msg:
+                with Message.fromStr(file.read_text()) as msg:
                     result = yield msg
-                case result:
-                    match _ is Success:
-                        if self.removeSuccesses:
-                            file.unlink()
-                        else:
-                            processed += [file]
-                    match _ is Failure:
-                        if self.removeFailures:
-                            file.unlink()
-                        else:
-                            processed += [file]
+                if isinstance(result, Success):
+                    if self.removeSuccesses:
+                        file.unlink()
+                    else:
+                        processed += [file]
+                elif isinstance(result, Failure):
+                    if self.removeFailures:
+                        file.unlink()
+                    else:
+                        processed += [file]
 
                 # Required by intended usage semantics
                 yield fake_message

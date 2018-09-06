@@ -1,13 +1,10 @@
 # -*- mode: python;-*-
 
-# TODO: Consider going back to using a Coconut data type for this.
-# The problem with the vanilla Python version is that it doesn't allow
-# for destructuring matches.
-
 # FIXME: The type annotations are really doing anything in here.
 # It all essentially collapses down to Any's all around. Needs more work.
+# This has been done in oc.py, but requires further testing with mypy.
 
-from typing import Any, Callable, TypeVar, Union, Generic, Optional
+from typing import Any, Callable, TypeVar, Union, Iterator, Sequence
 
 T = TypeVar("T", bound="Outcome")
 
@@ -43,7 +40,7 @@ class Outcome:
 
     # Monadic bind
     def bind(self: T, f: Callable) -> T:
-        """Monadic bind; chains together computations that comsume plain data
+        """Monadic bind; chains together computations that consume plain data
            and emit an Outcome. In case of Failure, simply returns Failure.
            In case of Success, applies `f` to the value held by `self`.
 
@@ -101,3 +98,57 @@ class Success(Outcome):
        # => 1234
     """
     pass
+
+
+def failed(oc:Outcome) -> bool:
+    """Did the operation fail?
+    """
+    if isinstance(oc, Failure):
+        return True
+    else:
+        return False
+
+
+def succeeded(oc:Outcome) -> bool:
+    """Did the operation succeed?
+    """
+    if isinstance(oc, Success):
+        return True
+    else:
+        return False
+
+
+def onFailure(oc:Outcome) -> Iterator[Any]:
+    """Yields the reason of the failure, iff the thing failed
+    """
+    # Can't use `if failed(oc):` because mypy can't infer type of `oc` :|
+    if isinstance(oc, Failure):
+        yield oc.reason
+
+
+def onSuccess(oc:Outcome) -> Iterator[Any]:
+    """Yields the value of success, iff the thing succeeded
+    """
+    if isinstance(oc, Success):
+        yield oc.value
+
+
+def filterMapFailed(f: Callable, ocs:Sequence[Outcome]) -> Iterator[Any]:
+    """Map a function *f* over a sequence of Outcomes, applying the function
+       only if the Outcome is a Failure, and **omitting** it from the resulting
+       sequence if it is a Success.
+    """
+    for oc in ocs:
+        for reason in onFailure(oc):
+            yield f(reason)
+
+
+def filterMapSucceeded(f: Callable, ocs:Sequence[Outcome]) -> Iterator[Any]:
+    """Map a function *f* over a sequence of Outcomes, applying the function
+       only if the Outcome is a Success, and **omitting** it from the resulting
+       sequence if it is a Failure. This is kind of "bad" behavior for a *map*,
+       but it's convenient.
+    """
+    for oc in ocs:
+        for value in onSuccess(oc):
+            yield f(value)

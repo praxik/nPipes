@@ -43,7 +43,7 @@ class SerializeTestCase(unittest.TestCase):
 
     def test_with(self):
         s = Step( id="list",
-                  trigger=TriggerSqs( QueueName("lister_queue")),
+                  trigger=TriggerSqs( QueueName("lister_queue"), overflowPath="s3://junk"),
                   command=Command(["ls", "-Fal"],
                                   outputChannel=OutputChannelStdout()),
                   description="Lists files in the local dir" )
