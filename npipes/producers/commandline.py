@@ -4,7 +4,9 @@ import argparse
 import sys
 from typing import Generator, List, Dict
 
-from ..messages.message import Message
+from dataclasses import dataclass
+
+from ..message.message import Message
 from ..outcome import Outcome, Success, Failure
 from .producer import Producer
 
@@ -13,7 +15,10 @@ def createProducer(cliArgs:List[str], producerArgs:Dict) -> Producer:
     return ProducerCommandline(**producerArgs)
 
 
-data ProducerCommandline( argv:List[str] ) from Producer:
+@dataclass(frozen=True)
+class ProducerCommandline(Producer):
+    argv:List[str]
+
     def messages(self) -> Generator[Message, Outcome, None]:
         """Yields a single *Message* which was passed in on the commandline.
 

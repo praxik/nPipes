@@ -15,17 +15,25 @@ import gzip
 from base64 import b64encode
 
 
-def sendMessage(queuename, message) -> Outcome:
+def sendMessage(queuename, overflowPath, message) -> Outcome:
+    """Sends *message* to SQS queue *queuename*
+
+       If *message* is larger than max size permitted by SQS, the *Body* is
+       sent to *overflowPath* in S3 and *message* is altered to reflect the
+       change.
+
+       **overflowPath** should be of the form "s3://bucket/my/prefix". The
+       actual message body will then be written to
+       "s3://bucket/my/prefix/some_random_name.gz"
+    """
     try:
         sqs = boto3.resource('sqs')
         queue = sqs.get_queue_by_name(QueueName=queuename)
-        # FIXME: Temporary AF!
-        overflowPath = ""
-        messageBody = overflow(message, overflowPath) |> .toJsonLines()
+        messageBody = overflow(message, overflowPath).toJsonLines()
         # Probably want to maintain an md5 of the overflowed body in
         # the message as well so the receiving side can check that it
         # has everything.
-        md5 = messageBody |> .encode("utf-8") |> hashlib.md5 |> .hexdigest()
+        md5 = hashlib.md5(messageBody.encode("utf-8")).hexdigest()
         response = queue.send_message(MessageBody=messageBody)
         if response.get("MD5OfMessageBody") == md5:
             return Success()
@@ -50,7 +58,7 @@ def overflow(message:Message, overflowPath:str) -> Message:
             # 2. If the above fails, we take the gzip bytestring (no b64 stuff), send
             #    it to overflowPath in S3, then re-jigger the Message to reference
             #    a BodyInAsset.
-            bodyBytes = Message.body.string.encode()
+            bodyBytes = body.string.encode()
             gzBodyBytes = gzip.compress(bodyBytes, compresslevel=9)
             b64BodyBytes = b64encode(gzBodyBytes)
             # So...did the compression get us under the threshold?
@@ -61,11 +69,17 @@ def overflow(message:Message, overflowPath:str) -> Message:
             else:
                 # Have to overflow to S3
                 fname = randomName()
-                s3Path = S3Path.fromString(overflowPath).add(fname)
+                s3Path = S3Path(overflowPath).add(fname)
                 uploadData(gzBodyBytes, s3Path)
-                asset = S3Asset(str(s3Path), AssetSettings(id="AutoOverflow",
-                                                           decompression=Decompression(True)))
-                return message._with([(".header.assets", message.header.assets + [asset]),
+                asset = S3Asset(s3Path, AssetSettings(id="AutoOverflow",
+                                                      decompression=Decompression(True)))
+
+                oldsteps = message.header.steps
+                oldstep = oldsteps[0]
+                newstep = oldstep._with([(".assets", oldstep.assets + [asset])])
+                newsteps = [newstep] + oldsteps[1:]
+
+                return message._with([(".header.steps", newsteps),
                                       (".header.body", BodyInAsset(assetId="AutoOverflow"))])
                 # We don't check the message at this point to see if we're truly under
                 # size now. That's because we're not going to put header information into

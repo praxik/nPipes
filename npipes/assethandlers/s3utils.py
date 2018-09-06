@@ -1,5 +1,5 @@
 # -*- mode: python;-*-
-from typing import Union, AnyStr
+from typing import Union, AnyStr, Any
 import pathlib
 import hashlib
 import boto3
@@ -34,7 +34,9 @@ def downloadFile(remotePath:Union[str, S3Path], localPath:pathlike) -> Outcome:
         return Failure("Unable to download {}. Reason: {}".format(remotePath, err))
 
 
-def isCurrent(obj:boto3.S3.Object, pth:pathlib.Path) -> bool:
+def isCurrent(obj:Any, pth:pathlib.Path) -> bool:
+    # obj really should be a boto S3 resource object, but there are currently no
+    # type annotations for that.
     if not pth.exists():
         return False
     md5 = fileMd5(str(pth))

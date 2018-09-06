@@ -1,6 +1,8 @@
 # -*- mode: python;-*-
 
 from typing import Generator, List, Dict
+from dataclasses import dataclass
+
 import boto3
 
 from ..message.message import Message
@@ -11,9 +13,10 @@ def createProducer(cliArgs:List[str], producerArgs:Dict) -> Producer:
     return ProducerSqs(**producerArgs)
 
 
-data ProducerSqs( queueName:str,
-                  maxNumberOfMessages:int=1
-                ) from Producer:
+@dataclass(frozen=True)
+class ProducerSqs(Producer):
+    queueName:str
+    maxNumberOfMessages:int=1
 
     def messages(self) -> Generator[Message, Outcome, None]:
         """Yields an (infinite) series of *Message*s by polling the specified
@@ -39,10 +42,9 @@ data ProducerSqs( queueName:str,
                 sqsMsg = sqsMsgs.pop()
                 with Message.fromStr(sqsMsg.body) as msg:
                     result = yield msg
-                case result:
-                    match s is Success:
-                        sqsMsg.delete()
-                    match f is Failure:
-                        sqsMsg.change_visibility(VisibilityTimeout=0)
+                if isinstance(result, Success):
+                    sqsMsg.delete()
+                elif isinstance(result, Failure):
+                    sqsMsg.change_visibility(VisibilityTimeout=0)
 
                 yield fake_message

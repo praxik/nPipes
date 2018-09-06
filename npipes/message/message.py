@@ -5,13 +5,14 @@ import json
 import yaml
 import pathlib
 import secrets
+from dataclasses import dataclass
 from operator import methodcaller
 from contextlib import contextmanager
 
 from ..serialize import Serializable, toJson
 from .header import (Header, Step, Trigger, TriggerGet, Uri, QueueName, TriggerSqs,
                      ProtocolEZQ, Command, FilePath, OutputChannelFile,
-                     S3Asset, Decompression, AssetSettings, NestedStepListType)
+                     S3Asset, Decompression, AssetSettings )
 from .body import Body, BodyInString, BodyInAsset
 from .ezqconverter import convertFromEZQ
 
@@ -39,16 +40,20 @@ from .ezqconverter import convertFromEZQ
 ########################
 # Message
 ########################
-data Message( header:Header=Header(),
-              body:Body=BodyInString("") ) from Serializable:
-    def _toDict(self, meth=methodcaller("_toDict")) = {
-            "header": self.header |> meth,
-            "body": self.body |> meth
-	    }
-    def _fromDict(d) = Message( body=Body._fromDict(d.get("body", {})),
-                                header=Header._fromDict(d.get("header", {})))
+@dataclass(frozen=True)
+class Message(Serializable):
+    header:Header=Header()
+    body:Body=BodyInString("")
 
-    def toJsonLines(self) = "{header}\n{body}".format(
+    def _toDict(self, meth=methodcaller("_toDict")):
+        return { "header": meth(self.header),
+                 "body": meth(self.body) }
+    def _fromDict(d):
+        return Message( body=Body._fromDict(d.get("body", {})),
+                        header=Header._fromDict(d.get("header", {})))
+
+    def toJsonLines(self):
+        return "{header}\n{body}".format(
                               header=toJson(self.header),
                               body=toJson(self.body))
 
@@ -87,19 +92,16 @@ data Message( header:Header=Header(),
 # FIXME: This ignores the encoding...and that won't do unless
 # we are explicitly normalizing the encoding on initial contact somehow
 
-def peekStep(Header(_, steps), n=0):
-    # type: (Header, int) -> Step
-    """Returns the nth Step in header"""
-    if len(steps) > n:
-        return steps[n]
-    else:
-        return Step()
 
-@addpattern(peekStep) # type: ignore
-def peekStep(Message(header, _), n=0):
-    # type: (Message, int) -> Step
-    """Returns the nth Step in message"""
-    return peekStep(header, n)
+def peekStep(x:Union[Header, Message], n:int=0) -> Step:
+    """Returns the nth Step in x"""
+    if isinstance(x, Message):
+        return peekStep(x.header, n)
+    else:
+        if len(x.steps) > n:
+            return x.steps[n]
+        else:
+            return Step()
 
 
 # def popStep(header:Header) -> Tuple[Union[Step, NestedStepListType], Header]:
@@ -110,13 +112,10 @@ def popStep(header:Header) -> Tuple[Step, Header]:
     nh = Header(header.encoding, header.steps[1:])
     return (step, nh)
 
-def peekTrigger(Header(_, _) as header, n=0):
-    # type: (Header, int) -> Trigger
-    """Returns the Trigger for the nth Step in header"""
-    return peekStep(header, n).trigger
 
-@addpattern(peekTrigger) # type: ignore
-def peekTrigger(Message(header, _), n=0):
-    # type: (Message, int) -> Trigger
-    """Returns the Trigger for the nth Step in message"""
-    return peekTrigger(header, n)
+def peekTrigger(x:Union[Header, Message], n:int=0) -> Trigger:
+    """Returns the Trigger for the nth Step in x"""
+    if isinstance(x, Message):
+        return peekTrigger(x.header, n)
+    else:
+        return peekStep(x, n).trigger

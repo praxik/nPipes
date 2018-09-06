@@ -40,7 +40,7 @@ def getEnv():
         env["NPIPES_lockCommand"] = True if lcs == "true" else False
     if "NPIPES_producerArgs" in env:
         pas = env["NPIPES_producerArgs"]
-        env["NPIPES_producerArgs"] = pas |> b64decode |> .decode() |> json.loads
+        env["NPIPES_producerArgs"] = json.loads(b64decode(pas).decode())
 
     return env
 

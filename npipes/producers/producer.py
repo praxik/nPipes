@@ -9,28 +9,10 @@ from ..outcome import Outcome, Success, Failure
 from ..message.message import Message
 
 
+# FIXME: What is this doing in here?
 def envLower(key:str) -> Dict:
     bv = environ.get(key, "e30=")  # "e30=" is base64 "{}"
-    return bv.encode() |> b64decode |> .decode() |> json.loads
-
-
-# Each Producer submodule MUST have a free function named createProducer,
-# with the following signature, and which returns a Producer of the specific
-# type.
-def createProducer(cliArgs:List[str], producerArgs:Dict) -> Producer:
-    """Factory-style module load hook. Allows for the producer contained
-       inside the module to be instantiated without having to know its
-       name or other details. All we need to know from the outside is the
-       name of the module.
-
-       cliArgs is the list of arguments passed on the commandline. Most
-       producers won't care about these.
-
-       args is the Dict of arguments specified in the env var
-       NPIPES_producerArgs. See the sqs subclass for a good example of
-       using these.
-    """
-    pass
+    return json.loads(b64decode(bv.encode()).decode())
 
 
 class Producer:
@@ -62,3 +44,23 @@ class Producer:
         #                      # *send*, which does not work for the way we need to
         #                      # use these generators. Best to think of these as bi-directional
         #                      # streams rather than typical python generators.
+
+
+
+# Each Producer submodule MUST have a free function named createProducer,
+# with the following signature, and which returns a Producer of the specific
+# type.
+def createProducer(cliArgs:List[str], producerArgs:Dict) -> Producer:
+    """Factory-style module load hook. Allows for the producer contained
+       inside the module to be instantiated without having to know its
+       name or other details. All we need to know from the outside is the
+       name of the module.
+
+       cliArgs is the list of arguments passed on the commandline. Most
+       producers won't care about these.
+
+       args is the Dict of arguments specified in the env var
+       NPIPES_producerArgs. See the sqs subclass for a good example of
+       using these.
+    """
+    pass

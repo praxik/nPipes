@@ -8,10 +8,10 @@ def toGzB64(s:str) -> bytes:
     """Convert a plain string to a base-64-encoded, gzipped bytes list;
        inverse function of *fromGzB64*
     """
-    return s |> .encode("utf-8") |> compress |> b64encode
+    return b64encode(compress(s.encode("utf-8")))
 
 def fromGzB64(b:bytes) -> str:
     """Convert a base-64-encoded, gzipped bytes list to a plain string;
        inverse function of *toGzB64*
     """
-    return b |> b64decode |> decompress |> bytes.decode
+    return decompress(b64decode(b)).decode()

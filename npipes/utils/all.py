@@ -1,2 +1,2 @@
-from iteratorextras import *
-from fp import *
+from npipes.utils.iteratorextras import *
+from npipes.utils.fp import *

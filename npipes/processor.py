@@ -23,7 +23,7 @@ from .configuration import Configuration
 from .serialize import toJson
 from .producers.producer import Producer
 from .outcome import Outcome, Success, Failure
-from .utils.iteratorextras import exhaust
+from .utils.iteratorextras import consume
 from .utils.typeshed import pathlike
 from .utils.autodeleter import AutoDeleter
 from .utils.compressionutils import fromGzB64
@@ -38,21 +38,21 @@ from .utils.compressionutils import fromGzB64
 
 
 def scrapeOutput(command:Command, cmdstdout:str) -> Outcome:
-    case command.outputChannel:
-        match OutputChannelStdout():
-            result = Success(cmdstdout) # type: Outcome
-        match OutputChannelFile(filepath): # type: ignore
-            p = Path(filepath)
-            if p.is_file():
-                result = Success(p.read_text())
-            else:
-                result = Failure("Output file {} does not exist".format(filepath))
+    oc = command.outputChannel
+    if isinstance(oc, OutputChannelStdout):
+        result:Outcome = Success(cmdstdout)
+    elif isinstance(oc, OutputChannelFile):
+        p = Path(oc.filepath)
+        if p.is_file():
+            result = Success(p.read_text())
+        else:
+            result = Failure("Output file {} does not exist".format(p))
     else:
         result = Failure("Unknown type of OutputChannel")
     return result
 
 
-def runProcess(command:Command, input:Optional[bytes], timeout:int) -> Outcome:
+def runProcess(command:Command, input:Optional[bytes], timeout:Optional[int]) -> Outcome:
     """Runs command in a new process and returns Outcome containing stdout as
        a stringin case of Succees, or stdout and stderr as a string in case of
        Failure
@@ -83,7 +83,7 @@ def runCommand(command:Command, body:str) -> Outcome:
     input = body.encode("utf-8") if command.inputChannelStdin else None
 
     return ( runProcess(command, input, timeout) >>
-             scrapeOutput$(command)
+             (lambda output: scrapeOutput(command, output))
            )
 
 
@@ -95,7 +95,7 @@ def toUniqueFile(data:str) -> str:
 # TODO: add to this: timeout
 # There is a lot of logic going on in here. Would be nice to break it up a bit more.
 def expandCommand(command:Command,
-                  assets:Asset[],
+                  assets:Sequence[Asset],
                   body:str,
                   bodyfile,
                   headerfile,
@@ -109,25 +109,24 @@ def expandCommand(command:Command,
                      "outputfile"  : outputfile,
                      "pid"         : pid}
     # Add asset markers into the dict
-    targetsForIds.update( (map(.settings.id, assets), map(decideLocalTarget, assets))
-                          |*> zip
-                          |> dict )
+    targetsForIds.update(dict(zip(map(lambda a: a.settings.id, assets),
+                                  map(decideLocalTarget, assets))))
 
-    newargs = ( command.arglist |>
-                fmap$(s -> string.Template(s).safe_substitute(targetsForIds)) )
+    newargs = list(map(lambda s: string.Template(s).safe_substitute(targetsForIds),
+                       command.arglist))
 
     # Special thing #1: we don't want to generate an escaped string unless requested
     # since bodycontents may be large and we don't want to duplicate it unnecessarily
-    if any(fmap(arg -> "${escapedbodycontents}" in arg, newargs)):
+    if any(map(lambda arg: "${escapedbodycontents}" in arg, newargs)):
         ebc = {"bodycontents": repr(body)}
-        newargs = fmap(s -> string.Template(s).safe_substitute(ebc), newargs)
+        newargs = list(map(lambda s: string.Template(s).safe_substitute(ebc), newargs))
 
     # Special thing #2: OutputFileChannel is the other place that can carry a
     # command var
     if isinstance(command.outputChannel, OutputChannelFile):
         fp = ( string.Template(command.outputChannel.filepath)
-                     .safe_substitute({"bodyfile", bodyfile}) )
-        command = command._with([".outputChannel.filepath", fp])
+                     .safe_substitute({"bodyfile": bodyfile}) )
+        command = command._with([(".outputChannel.filepath", fp)])
 
     return command._with([(".arglist", newargs)])
 
@@ -141,10 +140,10 @@ def extractBodyInString(body:BodyInString) -> str:
     if isinstance(body.encoding, EncodingPlainText):
         return body.string
     else: # must be EncodingGzB64
-       return body.string.encode() |> fromGzB64
+       return fromGzB64(body.string.encode())
 
 
-def extractBodyInAsset(body:BodyInAsset, assets:Asset[]) -> str:
+def extractBodyInAsset(body:BodyInAsset, assets:Sequence[Asset]) -> str:
     for asset in assets:
         if body.assetId == asset.settings.id:
             with open(decideLocalTarget(asset)) as f:
@@ -152,7 +151,7 @@ def extractBodyInAsset(body:BodyInAsset, assets:Asset[]) -> str:
     return ""
 
 
-def extractBody(body:Body, assets:Asset[]) -> str:
+def extractBody(body:Body, assets:Sequence[Asset]) -> str:
     """Extract the contents of a *Body* as a string
     """
     if isinstance(body, BodyInString):
@@ -186,16 +185,16 @@ def handleMessage(config, msg):
     else:
         with AutoDeleter() as deleter:
             body = extractBody(msg.body, step.assets)
-            bodyfile = toUniqueFile(body) |> deleter.add
-            headerfile = toUniqueFile(toJson(msg.header)) |> deleter.add
-            outputfile = randomName() |> deleter.add
-            map(deleter.add, lao.value) |> exhaust
+            bodyfile = deleter.add( toUniqueFile(body) )
+            headerfile = deleter.add( toUniqueFile(toJson(msg.header)) )
+            outputfile = deleter.add( randomName() )
+            consume( map(deleter.add, lao.value) )
 
-            result = ( ( chooseCommand(config, step.command)
-                         |> expandCommand$(?, step.assets, body, bodyfile,
-                                           headerfile, outputfile, config.pid)
-                         |> runCommand$(?, body) )
-                       >> triggerNextStep$(?, newHeader) )
+            result = ( ( Success(chooseCommand(config, step.command))
+                         >> (lambda cmd: Success(expandCommand(cmd, step.assets, body, bodyfile,
+                                           headerfile, outputfile, config.pid)))
+                         >> (lambda expcmd: runCommand(expcmd, body)) )
+                       >> (lambda res: triggerNextStep(res, newHeader)) )
     return result
 
 

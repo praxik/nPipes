@@ -1,6 +1,7 @@
 # -*- mode: python;-*-
 
 from typing import Generator, List, Dict
+from dataclasses import dataclass
 
 from ..message.message import Message
 from ..outcome import Outcome, Success, Failure
@@ -11,8 +12,10 @@ def createProducer(cliArgs:List[str], producerArgs:Dict) -> Producer:
     return ProducerTcpSocket(**producerArgs)
 
 
-data ProducerTcpSocket( socket:str,
-                         ) from Producer:
+@dataclass(frozen=True)
+class ProducerTcpSocket(Producer):
+    socket:str
+
     def messages(self) -> Generator[Message, Outcome, None]:
         """
            Please see the WARNING in parent class's docstring.
