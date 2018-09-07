@@ -6,17 +6,20 @@ import string
 import logging
 from pathlib import Path
 
-from .message.message import (
-    Body, BodyInString, BodyInAsset, Message,
-    peekStep, popStep, peekTrigger)
+# from .message.message import (
+#     Body, BodyInString, BodyInAsset, Message,
+#     peekStep, popStep, peekTrigger)
 
 from .message.header import (
     Asset,
-    Trigger, TriggerSns, TriggerSqs, TriggerGet, TriggerPost, TriggerLambda,
+    Trigger,
     OutputChannel, OutputChannelStdout, OutputChannelFile,
     Encoding, EncodingPlainText, EncodingGzB64,
     Command,
-    Step, Header)
+    Step, Header, Body, BodyInString, BodyInAsset, Message,
+    peekStep, popStep, peekTrigger)
+
+# from .message.body import Body, BodyInString, BodyInAsset
 
 from .assethandlers.assets import localizeAssets, decideLocalTarget, randomName
 from .configuration import Configuration
@@ -131,9 +134,13 @@ def expandCommand(command:Command,
     return command._with([(".arglist", newargs)])
 
 
-def triggerNextStep(result:Any, header:Header) -> Outcome:
+def triggerNextStep(result:Message) -> Outcome:
     # Will get more complicated once parallel pipelines are added
-    return peekTrigger(header).sendMessage(result)
+    return peekTrigger(result).sendMessage(result)
+
+
+def makeMessage(result: str, newHeader:Header) -> Outcome:
+    return Success(Message(header=newHeader, body=BodyInString(result)))
 
 
 def extractBodyInString(body:BodyInString) -> str:
@@ -194,7 +201,8 @@ def handleMessage(config, msg):
                          >> (lambda cmd: Success(expandCommand(cmd, step.assets, body, bodyfile,
                                            headerfile, outputfile, config.pid)))
                          >> (lambda expcmd: runCommand(expcmd, body)) )
-                       >> (lambda res: triggerNextStep(res, newHeader)) )
+                       >> (lambda res: makeMessage(res, newHeader))
+                       >> (lambda message: triggerNextStep(message)) )
     return result
 
 

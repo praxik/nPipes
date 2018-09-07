@@ -2,8 +2,8 @@
 
 import unittest
 import time
-from npipes.message.ezqconverter import *
-from npipes.message.message import Message
+# from npipes.message.ezqconverter import *
+from npipes.message.header import Message, convertFromEZQ
 
 class EZQConverterTestCase(unittest.TestCase):
 

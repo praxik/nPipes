@@ -7,7 +7,7 @@ from itertools import chain
 from pathlib import Path
 
 from npipes.processor import *
-from npipes.message.message import *
+# from npipes.message.message import *
 from npipes.outcome import *
 from npipes.message.header import *
 from npipes.producers.filesystem import ProducerFilesystem
@@ -115,11 +115,15 @@ class ProcessorTestCase(unittest.TestCase):
         runMessageProducer(config, producer)
 
         # check result directory
-        results = [p.read_text() for p in Path(testOut).glob("*")]
-        results.sort()
+        results = [Message.fromJsonLines(p.read_text()) for p in Path(testOut).glob("*")]
 
         # Compare list of contents to expected contents
-        self.assertEqual(results, ['Message 1', 'Message 2', 'Message 3'])
+        expectedMessages = list(map(lambda m: Message(Header(steps=[step2]),
+                                                      BodyInString("Message {}".format(m))),
+                                    range(1,4)))
+        for msg in expectedMessages:
+            self.assertTrue(msg in results)
+        # self.assertEqual(results, expectedMessages)
 
 
 

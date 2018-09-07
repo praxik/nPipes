@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Generator, List, Dict
 from dataclasses import dataclass
 
-from ..message.message import Message
+from ..message.header import Message
 from ..outcome import Outcome, Success, Failure
 from .producer import Producer
 from ..utils.typeshed import pathlike

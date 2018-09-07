@@ -1,13 +1,26 @@
 # -*- mode: python;-*-
 
-from typing import NewType, List, Union, Any, NamedTuple
+from typing import NewType, List, Union, Any, NamedTuple, TypeVar
 from operator import methodcaller
 
 from dataclasses import dataclass, field
 
 from ..serialize import Serializable, subtractDicts
 from ..assethandlers.s3path import S3Path
+from ..outcome import Outcome, Success, Failure
+# import npipes.message.message
+from typing import Tuple, Type, NewType, Union
+import json
+import yaml
+import pathlib
+import secrets
+from dataclasses import dataclass
+from operator import methodcaller
+from contextlib import contextmanager
 
+from ..serialize import Serializable, toJson, toMinJson
+# This one vvv is at the end of the file to avoid import cycle
+# from .ezqconverter import convertFromEZQ
 
 
 ##############################################################################
@@ -19,6 +32,10 @@ Topic = NewType("Topic", str)
 QueueName = NewType("QueueName", str)
 FilePath = NewType("FilePath", str)
 
+# Works a bit like a forward declaration for Message so we can refer to it
+# in Trigger without causing some sort of type-recursive meltdown
+M = TypeVar("M", bound="Message")
+
 ##############################################################################
 # Primary Types
 ##############################################################################
@@ -27,7 +44,7 @@ FilePath = NewType("FilePath", str)
 # Trigger
 ########################
 class Trigger(Serializable):
-    def sendMessage(self, message):
+    def sendMessage(self, message:M) -> Outcome:
         pass
     def _fromDict(d):
         typ = d.get("type", "nothing").lower()
@@ -67,9 +84,9 @@ class TriggerSns(Trigger):
     def _toMinDict(self):
         return self._toDict()
 
-    def sendMessage(self, message):
+    def sendMessage(self, message:M) -> Outcome:
         import npipes.triggers.sns
-        return triggers.sns.sendMessage(self.topic, message)
+        return npipes.triggers.sns.sendMessage(self.topic, message)
 
 @dataclass(frozen=True)
 class TriggerSqs(Trigger):
@@ -83,9 +100,9 @@ class TriggerSqs(Trigger):
     def _toMinDict(self):
         return self._toDict()
 
-    def sendMessage(self, message):
+    def sendMessage(self, message:M) -> Outcome:
         import npipes.triggers.sqs
-        return triggers.sqs.sendMessage(self.queueName, self.overflowPath, message)
+        return npipes.triggers.sqs.sendMessage(self.queueName, self.overflowPath, message)
 
 @dataclass(frozen=True)
 class TriggerGet(Trigger):
@@ -96,9 +113,9 @@ class TriggerGet(Trigger):
     def _toMinDict(self):
         return self._toDict()
 
-    def sendMessage(self, message):
+    def sendMessage(self, message:M) -> Outcome:
         import npipes.triggers.uri
-        return triggers.uri.sendMessageGet(self.uri, message)
+        return npipes.triggers.uri.sendMessageGet(self.uri, message)
 
 @dataclass(frozen=True)
 class TriggerPost(Trigger):
@@ -109,9 +126,9 @@ class TriggerPost(Trigger):
     def _toMinDict(self):
         return self._toDict()
 
-    def sendMessage(self, message):
+    def sendMessage(self, message:M) -> Outcome:
         import npipes.triggers.uri
-        return triggers.uri.sendMessagePost(self.uri, message)
+        return npipes.triggers.uri.sendMessagePost(self.uri, message)
 
 @dataclass(frozen=True)
 class TriggerLambda(Trigger):
@@ -122,9 +139,9 @@ class TriggerLambda(Trigger):
     def _toMinDict(self):
         return self._toDict()
 
-    def sendMessage(self, message):
+    def sendMessage(self, message:M) -> Outcome:
         import npipes.triggers.awsLambda
-        return triggers.awsLambda.sendMessage(self.name, message)
+        return npipes.triggers.awsLambda.sendMessage(self.name, message)
 
 @dataclass(frozen=True)
 class TriggerFilesystem(Trigger):
@@ -135,7 +152,7 @@ class TriggerFilesystem(Trigger):
     def _toMinDict(self):
         return self._toDict()
 
-    def sendMessage(self, message):
+    def sendMessage(self, message:M) -> Outcome:
         import npipes.triggers.filesystem
         return npipes.triggers.filesystem.sendMessage(self.dir, message)
 
@@ -147,7 +164,7 @@ class TriggerNothing(Trigger):
     def _toMinDict(self):
         return self._toDict()
 
-    def sendMessage(self, _):
+    def sendMessage(self, _:M) -> Outcome:
         return Success()
 
 
@@ -528,3 +545,129 @@ class Header(Serializable):
     def _fromDict(d):
         return Header( encoding=Encoding._fromDict(d.get("encoding", {})),
                        steps=list(map(Step._fromDict, d.get("steps", []))))
+
+
+########################
+# Body
+########################
+class Body(Serializable):
+    def _fromDict(d):
+        typ = d.get("type", "string").lower()
+        if typ == "string":
+            return BodyInString._fromDict(d)
+        elif typ == "asset":
+            return BodyInAsset._fromDict(d)
+
+@dataclass(frozen=True)
+class BodyInString(Body):
+    string:str
+    encoding:Encoding=EncodingPlainText()
+
+    def _toDict(self, meth=methodcaller("_toDict")):
+        return { "type": "string",
+                 "string": self.string,
+                 "encoding": meth(self.encoding) }
+    def _fromDict(d):
+        return BodyInString(string=d.get("string", ""),
+                            encoding=Encoding._fromDict(d.get("encoding", {})))
+
+
+@dataclass(frozen=True)
+class BodyInAsset(Body):
+    assetId:str
+
+    def _toDict(self, meth=methodcaller("_toDict")):
+        return { "type": "asset",
+                 "assetId": self.assetId }
+    def _fromDict(d):
+        return BodyInAsset(assetId=d.get("assetId"))
+
+
+########################
+# Message
+########################
+@dataclass(frozen=True)
+class Message(Serializable):
+    header:Header=Header()
+    body:Body=BodyInString("")
+
+    def _toDict(self, meth=methodcaller("_toDict")):
+        return { "header": meth(self.header),
+                 "body": meth(self.body) }
+    def _fromDict(d):
+        return Message( body=Body._fromDict(d.get("body", {})),
+                        header=Header._fromDict(d.get("header", {})))
+
+    def toJsonLines(self, f=toJson):
+        return "{header}\n{body}".format(
+                              header=f(self.header),
+                              body=f(self.body))
+
+    def toMinJsonLines(self):
+        return self.toJsonLines(f=toMinJson)
+
+    def fromJsonLines(s):
+        # Header is a single JSON line; Body is remainder of string
+        h, *t = s.splitlines()
+        header = json.loads(h)
+        body = json.loads("\n".join(t))
+        return Message._fromDict({"header": header, "body": body})
+
+    @contextmanager
+    def fromStr(s):
+        """Contextmanager that yields a single message. The message should only
+           be considered valid within the context's scope. This is necessary in
+           order to allow conversion and management of the message resource
+           itself.
+
+           Ex:
+           with Message.fromStr("...") as msg:
+               # do stuff with msg
+               ...
+
+           # msg is now invalid
+        """
+        if s.startswith("---\nEZQ"):
+            with convertFromEZQ(Message, s) as convMess:
+                 yield convMess
+        else:
+            yield Message.fromJsonLines(s)
+
+
+##############################################################################
+# Functions
+##############################################################################
+
+# FIXME: This ignores the encoding...and that won't do unless
+# we are explicitly normalizing the encoding on initial contact somehow
+
+
+def peekStep(x:Union[Header, Message], n:int=0) -> Step:
+    """Returns the nth Step in x"""
+    if isinstance(x, Message):
+        return peekStep(x.header, n)
+    else:
+        if len(x.steps) > n:
+            return x.steps[n]
+        else:
+            return Step()
+
+
+# def popStep(header:Header) -> Tuple[Union[Step, NestedStepListType], Header]:
+def popStep(header:Header) -> Tuple[Step, Header]:
+    """Returns first Step in header, along with a new Header
+       containing the remaining Step's"""
+    step = peekStep(header)
+    nh = Header(header.encoding, header.steps[1:])
+    return (step, nh)
+
+
+def peekTrigger(x:Union[Header, Message], n:int=0) -> Trigger:
+    """Returns the Trigger for the nth Step in x"""
+    if isinstance(x, Message):
+        return peekTrigger(x.header, n)
+    else:
+        return peekStep(x, n).trigger
+
+
+from .ezqconverter import convertFromEZQ

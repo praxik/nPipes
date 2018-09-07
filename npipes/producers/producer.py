@@ -6,7 +6,7 @@ from os import environ
 
 from typing import Generator, List, Dict
 from ..outcome import Outcome, Success, Failure
-from ..message.message import Message
+from ..message.header import Message
 
 
 # FIXME: What is this doing in here?

@@ -5,13 +5,14 @@ import yaml
 import pathlib
 import secrets
 import platform
+import os
 from contextlib import contextmanager
 
 from .header import (Header, Step, Trigger, TriggerGet, Uri, QueueName, TriggerSqs,
                      ProtocolEZQ, Command, FilePath, OutputChannelFile,
-                     S3Asset, Decompression, AssetSettings)
+                     S3Asset, Decompression, AssetSettings, BodyInString, BodyInAsset)
 
-from .body import (BodyInString, BodyInAsset)
+# from .body import (BodyInString, BodyInAsset)
 from ..utils.autodeleter import autoDeleteFile
 from ..assethandlers.assets import randomName
 
@@ -61,7 +62,8 @@ def makeSteps(id, command, assets, ezqHeader):
     if result_queue_name:
         # EZQ has no concept of future Steps; only the Trigger matters
         secondStep = Step( id="1",
-                           trigger=TriggerSqs(QueueName(result_queue_name)))
+                           trigger=TriggerSqs(QueueName(result_queue_name),
+                                              overflowPath=os.environ.get("NPIPES_SqsOverflowPath", "")))
         return [firstStep, secondStep] + tunneledSteps
     else:
         return [firstStep] + tunneledSteps

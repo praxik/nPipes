@@ -1,9 +1,9 @@
 # -*- mode: python;-*-
 
-from ..message.message import Message
+from ..message.header import Message
 from ..outcome import Outcome, Success, Failure
-from ..message.body import Body, BodyInString, BodyInAsset
-from ..message.header import Encoding, EncodingPlainText, EncodingGzB64, S3Asset, AssetSettings, Decompression
+# from ..message.body import Body, BodyInString, BodyInAsset
+from ..message.header import Encoding, EncodingPlainText, EncodingGzB64, S3Asset, AssetSettings, Decompression, BodyInString, BodyInAsset
 from ..assethandlers.assets import randomName
 from ..assethandlers.s3utils import uploadData
 from ..assethandlers.s3path import S3Path
@@ -15,7 +15,7 @@ import gzip
 from base64 import b64encode
 
 
-def sendMessage(queuename, overflowPath, message) -> Outcome:
+def sendMessage(queuename:str, overflowPath:str, message:Message) -> Outcome:
     """Sends *message* to SQS queue *queuename*
 
        If *message* is larger than max size permitted by SQS, the *Body* is

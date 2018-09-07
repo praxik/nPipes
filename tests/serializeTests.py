@@ -3,7 +3,7 @@
 import unittest
 
 from npipes.message.header import *
-from npipes.message.message import *
+# from npipes.message.message import *
 from npipes.assethandlers.s3utils import S3Path
 
 class SerializeTestCase(unittest.TestCase):

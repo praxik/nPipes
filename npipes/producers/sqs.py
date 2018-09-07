@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import boto3
 
-from ..message.message import Message
+from ..message.header import Message
 from ..outcome import Outcome, Success, Failure
 from .producer import Producer
 
