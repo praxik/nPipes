@@ -9,8 +9,9 @@ pythonfiles: $(pythons)
 check: pythonfiles
 	env MYPYPATH=.env/lib/python3.6/site-packages/dataclasses/ mypy --ignore-missing-imports -p npipes
 
-#clean: FORCE
-
+clean: FORCE
+	rm -rf npipes/__pycache__
+	rm -rf npipes/**/__pycache__
 
 FORCE: ;
 
