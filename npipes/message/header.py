@@ -165,7 +165,7 @@ class TriggerNothing(Trigger):
         return self._toDict()
 
     def sendMessage(self, _:M) -> Outcome:
-        return Success()
+        return Success(None)
 
 
 ########################

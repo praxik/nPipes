@@ -17,10 +17,12 @@ from ..message.header import (
 
 from ..outcome import Outcome, Success, Failure, onFailure, filterMapSucceeded
 from ..utils.fp import concurrentMap
+from ..utils.iteratorextras import consume
 from .s3path import S3Path
+from ..utils.typeshed import pathlike
 
 
-def localizeAssets(assets:Sequence[Asset]) -> Outcome:
+def localizeAssets(assets:Sequence[Asset]) -> Outcome[str, Sequence[pathlike]]:
     """Localize (ie., download to local node and write to disk) a List of
        Asset's according to the rules for each Asset type.
        Cleans up and returns Failure if localization fails for *any* Asset.
@@ -31,19 +33,19 @@ def localizeAssets(assets:Sequence[Asset]) -> Outcome:
     if any(map(lambda oc: isinstance(oc, Failure), outcomes)):
         logFailures(outcomes, assets)
         # Clean up the successful downloads
-        filterMapSucceeded(lambda p: Path(p).unlink(), outcomes)
+        consume(filterMapSucceeded(lambda p: Path(p).unlink(), outcomes))
         return Failure("Unable to localize one or more assets")
     else:
         return Success(list(map(lambda oc: oc.value, outcomes)))
 
 
-def logFailures(outcomes:Sequence[Outcome], assets:Sequence[Asset]) -> None:
+def logFailures(outcomes:Sequence[Outcome[str, pathlike]], assets:Sequence[Asset]) -> None:
     for oc, nm in zip(outcomes, map(str, assets)):
         for reason in onFailure(oc):
             logging.fatal("Fatal error localizing {}: {}".format(nm, reason))
 
 
-def localizeAsset(asset:Asset) -> Outcome:
+def localizeAsset(asset:Asset) -> Outcome[str, pathlike]:
     """Localize a single Asset
     """
     tempname = genUniqueAssetName(asset)
@@ -56,7 +58,7 @@ def localizeAsset(asset:Asset) -> Outcome:
 # went well. (That allows easier composition and chaining.) We start with
 # a fake method so we can selectively attach new @addpattern versions to it
 # based on available imports.
-def localizeAssetTyped(asset:Asset, target:str) -> Outcome:
+def localizeAssetTyped(asset:Asset, target:str) -> Outcome[str, pathlike]:
     if isinstance(asset, S3Asset):
         return localizeS3Asset(asset, target)
     elif isinstance(asset, UriAsset):
@@ -67,7 +69,7 @@ def localizeAssetTyped(asset:Asset, target:str) -> Outcome:
 # Boto is large, so don't assume s3 utils are available:
 try:
     from . import s3utils
-    def localizeS3Asset(asset:S3Asset, target:str) -> Outcome:
+    def localizeS3Asset(asset:S3Asset, target:str) -> Outcome[str, pathlike]:
         """Localize an Asset stored in S3; assumes AWS credentials exist in the
         environment
         """
@@ -78,7 +80,7 @@ except ImportError:
 
 try:
     import requests
-    def localizeUriAsset(asset:UriAsset, target:str) -> Outcome:
+    def localizeUriAsset(asset:UriAsset, target:str) -> Outcome[str, pathlike]:
         """Localize a standard URI Asset
         """
         # TODO: do some stuff with requests.py
@@ -99,7 +101,7 @@ def randomName() -> str:
     return secrets.token_hex(8)
 
 
-def decompressIfRequired(fname:str, asset:Asset) -> Outcome:
+def decompressIfRequired(fname:pathlike, asset:Asset) -> Outcome[str, pathlike]:
     """Invokes decompression if asset has been marked for decompression;
        successful Outcome will contain the filename that should be used
        for processing beyond this point
@@ -110,7 +112,7 @@ def decompressIfRequired(fname:str, asset:Asset) -> Outcome:
         return Success(fname)
 
 
-def decompress(path:str) -> Outcome:
+def decompress(path:pathlike) -> Outcome[str, pathlike]:
     """Chooses and invokes a decompressor based on file extension of path
     """
     pth = Path(path)
@@ -123,7 +125,7 @@ def decompress(path:str) -> Outcome:
         return Failure("Unable to determine decompressor from file extension")
 
 
-def decompressZip(file:str) -> Outcome:
+def decompressZip(file:pathlike) -> Outcome[str, pathlike]:
     """Decompress ZipFile `file` into a unique dir
     """
     tmpdir = randomName()
@@ -139,7 +141,7 @@ def decompressZip(file:str) -> Outcome:
         return Failure("Decompression error: {}".format(err))
 
 
-def decompressGzip(file:str) -> Outcome:
+def decompressGzip(file:pathlike) -> Outcome[str, pathlike]:
     """Decompress a .gz or .tgz file.
        ONLY decompresses; does NOT explode .tar.gz or .tgz!
     """
@@ -155,7 +157,7 @@ def decompressGzip(file:str) -> Outcome:
         return Failure("decompressGzip failed with {}".format(err))
 
 
-def renameToLocalTarget(fname:str, asset:Asset) -> Outcome:
+def renameToLocalTarget(fname:pathlike, asset:Asset) -> Outcome[str, pathlike]:
     """Rename an Asset to the requested localTarget
     """
     target = decideLocalTarget(asset)
@@ -169,8 +171,8 @@ def renameToLocalTarget(fname:str, asset:Asset) -> Outcome:
             # to recursively move files. Should write my own to avoid unnecessary disk
             # use in this copy all then delete all process.
             if Path(fname).is_dir():
-                distutils.dir_util.copy_tree(fname, target)
-                distutils.dir_util.remove_tree(fname)
+                distutils.dir_util.copy_tree(str(fname), target)
+                distutils.dir_util.remove_tree(str(fname))
             else:
                 return Failure("Unable to rename a file to {}".format(targetPath))
         return Success(target)

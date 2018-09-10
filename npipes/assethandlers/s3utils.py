@@ -12,7 +12,7 @@ from .s3path import S3Path
 
 
 # -> Outcome[str, pathlike]
-def downloadFile(remotePath:Union[str, S3Path], localPath:pathlike) -> Outcome:
+def downloadFile(remotePath:Union[str, S3Path], localPath:pathlike) -> Outcome[str, pathlike]:
     """Assumes AWS credentials exist in the environment
        Though the types involved are different, the signature for
        downloadFile, uploadFile, and uploadData follows the same pattern:
@@ -28,8 +28,9 @@ def downloadFile(remotePath:Union[str, S3Path], localPath:pathlike) -> Outcome:
             return Success(localPath)
         else:
             preparePath(pth)
-            obj.download_file(str(localPath))
-            return checkLocal(pth)
+            obj.download_file(str(pth))
+            return checkLocal(localPath) # use localPath rather than pth so contained returned
+                                         # type is same as input type
     except Exception as err:
         return Failure("Unable to download {}. Reason: {}".format(remotePath, err))
 
@@ -58,9 +59,10 @@ def preparePath(pth:pathlib.Path) -> None:
     pth.parent.mkdir(parents=True, exist_ok=True)
 
 
-def checkLocal(pth:pathlib.Path) -> Outcome:
-    if pth.exists() and pth.stat().st_size > 0:
-        return Success(str(pth))
+def checkLocal(pth:pathlike) -> Outcome[str, pathlike]:
+    p = pathlib.Path(pth)
+    if p.exists() and p.stat().st_size > 0:
+        return Success(pth)
     else:
         return Failure("Error downloading {}; local file does not exist or is empty".format(str(pth)))
 
@@ -68,22 +70,32 @@ def checkLocal(pth:pathlib.Path) -> Outcome:
 # TODO: For both of these upload functions, should probably be doing something sane
 # with ContentType and ContentEncoding
 # -> Outcome[str, Union[str, S3Path]]
-def uploadFile(localPath:pathlike, remotePath:Union[str, S3Path]) -> Outcome:
+def uploadFile(localPath:pathlike, remotePath:Union[str, S3Path]) -> Outcome[str, Union[str, S3Path]]:
+    """Assumes AWS credentials exist in the environment
+       Though the types involved are different, the signature for
+       downloadFile, uploadFile, and uploadData follows the same pattern:
+       source -> destination -> destination
+    """
     s3path = S3Path(remotePath)
     try:
         obj = boto3.resource("s3").Object(s3path.bucket, s3path.key)
         if isCurrent(obj, pathlib.Path(localPath)):
-            return Success(localPath)
+            return Success(remotePath)
         else:
             obj.upload_file(str(localPath))
-            return Success(localPath)
+            return Success(remotePath)
     except Exception as err:
         return Failure("Unable to upload {} to {}. Reason: {}"
                         .format(str(localPath), str(remotePath), err))
 
 
 # -> Outcome[str, Union[str, S3Path]]
-def uploadData(data:AnyStr, remotePath:Union[str, S3Path]) -> Outcome:
+def uploadData(data:AnyStr, remotePath:Union[str, S3Path]) -> Outcome[str, Union[str, S3Path]]:
+    """Assumes AWS credentials exist in the environment
+       Though the types involved are different, the signature for
+       downloadFile, uploadFile, and uploadData follows the same pattern:
+       source -> destination -> destination
+    """
     s3path = S3Path(remotePath)
     try:
         obj = boto3.resource("s3").Object(s3path.bucket, s3path.key)

@@ -10,6 +10,8 @@ from pathlib import Path
 #     Body, BodyInString, BodyInAsset, Message,
 #     peekStep, popStep, peekTrigger)
 
+from .outcome import Success, Failure, onFailure, onSuccess, filterMapFailed
+
 from .message.header import (
     Asset,
     Trigger,
@@ -40,7 +42,7 @@ from .utils.compressionutils import fromGzB64
 # Control flow starts near the *bottom* of the file, and moves upward as needed.
 
 
-def scrapeOutput(command:Command, cmdstdout:str) -> Outcome:
+def scrapeOutput(command:Command, cmdstdout:str) -> Outcome[str, str]:
     oc = command.outputChannel
     if isinstance(oc, OutputChannelStdout):
         result:Outcome = Success(cmdstdout)
@@ -55,7 +57,7 @@ def scrapeOutput(command:Command, cmdstdout:str) -> Outcome:
     return result
 
 
-def runProcess(command:Command, input:Optional[bytes], timeout:Optional[int]) -> Outcome:
+def runProcess(command:Command, input:Optional[bytes], timeout:Optional[int]) -> Outcome[str, str]:
     """Runs command in a new process and returns Outcome containing stdout as
        a stringin case of Succees, or stdout and stderr as a string in case of
        Failure
@@ -75,7 +77,7 @@ def runProcess(command:Command, input:Optional[bytes], timeout:Optional[int]) ->
         return Success(cp.stdout.decode())
 
 
-def runCommand(command:Command, body:str) -> Outcome:
+def runCommand(command:Command, body:str) -> Outcome[str, str]:
     """Runs a command with pre-expanded tokens. Handles logic of monitoring for
        early exit.
     """
@@ -134,12 +136,12 @@ def expandCommand(command:Command,
     return command._with([(".arglist", newargs)])
 
 
-def triggerNextStep(result:Message) -> Outcome:
+def triggerNextStep(result:Message) -> Outcome[str, None]:
     # Will get more complicated once parallel pipelines are added
     return peekTrigger(result).sendMessage(result)
 
 
-def makeMessage(result: str, newHeader:Header) -> Outcome:
+def makeMessage(result: str, newHeader:Header) -> Outcome[str, Message]:
     return Success(Message(header=newHeader, body=BodyInString(result)))
 
 
@@ -215,8 +217,12 @@ def runMessageProducer(config:Configuration, producer:Producer) -> None:
 
         stream.send(result)
 
-        if isinstance(result, Failure):
-            logging.fatal(result.reason)
+        for reason in onFailure(result):
+            logging.fatal(reason)
+
+        consume(filterMapFailed(lambda reason: logging.fatal(reason), [result]))
+        # if isinstance(result, Failure):
+        #     logging.fatal(result.reason)
 
         # TODO: check value of state.run and break out if False
     return None

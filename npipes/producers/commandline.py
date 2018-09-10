@@ -2,7 +2,7 @@
 
 import argparse
 import sys
-from typing import Generator, List, Dict
+from typing import Generator, List, Dict, Any
 
 from dataclasses import dataclass
 
@@ -19,7 +19,7 @@ def createProducer(cliArgs:List[str], producerArgs:Dict) -> Producer:
 class ProducerCommandline(Producer):
     argv:List[str]
 
-    def messages(self) -> Generator[Message, Outcome, None]:
+    def messages(self) -> Generator[Message, Outcome[Any, Any], None]:
         """Yields a single *Message* which was passed in on the commandline.
 
            Please see the WARNING in parent class's docstring.

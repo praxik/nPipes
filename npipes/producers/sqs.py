@@ -1,6 +1,6 @@
 # -*- mode: python;-*-
 
-from typing import Generator, List, Dict
+from typing import Generator, List, Dict, Any
 from dataclasses import dataclass
 
 import boto3
@@ -18,7 +18,7 @@ class ProducerSqs(Producer):
     queueName:str
     maxNumberOfMessages:int=1
 
-    def messages(self) -> Generator[Message, Outcome, None]:
+    def messages(self) -> Generator[Message, Outcome[Any, Any], None]:
         """Yields an (infinite) series of *Message*s by polling the specified
            queue. When caller *send*s back *Success*, the message is deleted
            from the queue; otherwise, the message is immediately made visible in
