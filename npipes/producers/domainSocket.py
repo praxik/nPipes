@@ -1,6 +1,6 @@
 # -*- mode: python;-*-
 
-from typing import Generator, List, Dict
+from typing import Generator, List, Dict, Any
 from dataclasses import dataclass
 
 from ..message.header import Message
@@ -16,7 +16,7 @@ def createProducer(cliArgs:List[str], producerArgs:Dict) -> Producer:
 class ProducerDomainSocket(Producer):
     socket:str
 
-    def messages(self) -> Generator[Message, Outcome, None]:
+    def messages(self) -> Generator[Message, Outcome[Any, Any], None]:
         """
            Please see the WARNING in parent class's docstring.
         """

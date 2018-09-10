@@ -2,7 +2,7 @@
 
 import time
 from pathlib import Path
-from typing import Generator, List, Dict
+from typing import Generator, List, Dict, Any
 from dataclasses import dataclass
 
 from ..message.header import Message
@@ -23,7 +23,7 @@ class ProducerFilesystem(Producer):
     refreshInterval:float=1.0
     quitWhenEmpty:bool=False
 
-    def messages(self) -> Generator[Message, Outcome, None]:
+    def messages(self) -> Generator[Message, Outcome[Any, Any], None]:
         """Treats a filesystem directory as a queue, yielding the contents of
            each normal file as a message. Tracks processed files to avoid
            re-processing. "Polls" the "queue" indefinitely. Files are processed

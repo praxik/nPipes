@@ -4,7 +4,7 @@ from ..message.header import Message
 from ..outcome import Outcome, Success, Failure
 
 
-def sendMessage(name, message:Message) -> Outcome:
+def sendMessage(name, message:Message) -> Outcome[str, None]:
     # TODO: directly invoke the Lambda function; note that this is entirely
     # orthogonal to running *on* Lambda.
     pass

@@ -7,6 +7,7 @@ from ..message.header import Encoding, EncodingPlainText, EncodingGzB64, S3Asset
 from ..assethandlers.assets import randomName
 from ..assethandlers.s3utils import uploadData
 from ..assethandlers.s3path import S3Path
+from ..message.ezqconverter import toEzqOrJsonLines
 
 from typing import Generator, List
 import boto3
@@ -15,7 +16,7 @@ import gzip
 from base64 import b64encode
 
 
-def sendMessage(queuename:str, overflowPath:str, message:Message) -> Outcome:
+def sendMessage(queuename:str, overflowPath:str, message:Message) -> Outcome[str, None]:
     """Sends *message* to SQS queue *queuename*
 
        If *message* is larger than max size permitted by SQS, the *Body* is
@@ -29,14 +30,15 @@ def sendMessage(queuename:str, overflowPath:str, message:Message) -> Outcome:
     try:
         sqs = boto3.resource('sqs')
         queue = sqs.get_queue_by_name(QueueName=queuename)
-        messageBody = overflow(message, overflowPath).toJsonLines()
+        messageAutoflowed = overflow(message, overflowPath)
+        messageBody = toEzqOrJsonLines(overflow(message, overflowPath))
         # Probably want to maintain an md5 of the overflowed body in
         # the message as well so the receiving side can check that it
         # has everything.
         md5 = hashlib.md5(messageBody.encode("utf-8")).hexdigest()
         response = queue.send_message(MessageBody=messageBody)
         if response.get("MD5OfMessageBody") == md5:
-            return Success()
+            return Success(None)
         else:
             return Failure("Enqueued message MD5 does not match what was sent")
     except Exception as err:

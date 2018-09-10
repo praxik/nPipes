@@ -4,7 +4,7 @@ from base64 import b64decode
 import json
 from os import environ
 
-from typing import Generator, List, Dict
+from typing import Generator, List, Dict, Any
 from ..outcome import Outcome, Success, Failure
 from ..message.header import Message
 
@@ -16,7 +16,7 @@ def envLower(key:str) -> Dict:
 
 
 class Producer:
-    def messages(self) -> Generator[Message, Outcome, None]:
+    def messages(self) -> Generator[Message, Outcome[Any, Any], None]:
         """Yields an infinte sequence of *Message*s. Caller is expected to *send*
            either *Success* or *Failure* after each yielded *Message* to allow producers
            to perform any required cleanup associated with the *Message*.

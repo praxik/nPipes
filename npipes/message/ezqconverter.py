@@ -1,6 +1,6 @@
 # -*- mode: python;-*-
 
-from typing import Tuple, Type, NewType
+from typing import Tuple, Type, NewType, Sequence, Dict, Any, List
 import yaml
 import pathlib
 import secrets
@@ -9,14 +9,16 @@ import os
 from contextlib import contextmanager
 
 from .header import (Header, Step, Trigger, TriggerGet, Uri, QueueName, TriggerSqs,
-                     ProtocolEZQ, Command, FilePath, OutputChannelFile,
-                     S3Asset, Decompression, AssetSettings, BodyInString, BodyInAsset)
+                     ProtocolEZQ, Command, FilePath, OutputChannelFile, Asset,
+                     S3Asset, Decompression, AssetSettings, Body, BodyInString, BodyInAsset,
+                     Message)
 
-# from .body import (BodyInString, BodyInAsset)
+from ..assethandlers.s3path import S3Path
 from ..utils.autodeleter import autoDeleteFile
 from ..assethandlers.assets import randomName
 
 # TODO: Add type annotations to this file?
+# TODO: Find suitable place tp warn about NPIPES_SqsOverflowPath env var
 
 # Using injection of cls = Message to break dep cycle. Downside is this
 # hides the Message and Body types, so we're not getting full benefit of
@@ -60,10 +62,12 @@ def makeSteps(id, command, assets, ezqHeader):
     # future steps through EZQ. This will pick them up and decode them:
     tunneledSteps = list(map(lambda d: Step._fromDict(d), ezqHeader.get("npipes_next_steps",[])))
     if result_queue_name:
-        # EZQ has no concept of future Steps; only the Trigger matters
+        # EZQ has no concept of future Steps; only the Trigger and Protocol matter.
+        # For the latter, if it came in as EZQ, we assume it must leave the same way
         secondStep = Step( id="1",
                            trigger=TriggerSqs(QueueName(result_queue_name),
-                                              overflowPath=os.environ.get("NPIPES_SqsOverflowPath", "")))
+                                              overflowPath=os.environ.get("NPIPES_SqsOverflowPath", "")),
+                           protocol=ProtocolEZQ())
         return [firstStep, secondStep] + tunneledSteps
     else:
         return [firstStep] + tunneledSteps
@@ -91,7 +95,7 @@ def makeArglist(id, ezqHeader):
     return arglist
 
 
-def substituteNpipesMarkers(fullMsgFilename, arglist):
+def substituteNpipesMarkers(fullMsgFilename:str, arglist:Sequence[str]):
     subbed = []
     for elem in arglist:
         newelem = ( elem.replace("$msg_contents", "${escapedbodycontents}")
@@ -107,27 +111,28 @@ def substituteNpipesMarkers(fullMsgFilename, arglist):
 # substituteNpipesMarkers(["bash", "-c", "command $s3_1 $s3_2 static $s3_4 $s3_3"])
 # ['bash', '-c', 'command ${asset_1} ${asset_2} static ${asset_4} ${asset_3}']
 
-def makeBody(bodyStr, ezqHeader, assets):
+def makeBody(bodyStr:str,
+             ezqHeader:Dict[str, Any], assets:List[Asset]) -> Tuple[Body, Sequence[Asset]]:
+    body:Body
     if ezqHeader.get("get_s3_file_as_body", False):
         bodyAssetIndex = len(assets)
-        bodyAsset = [s3DictToAsset(ezqHeader["get_s3_file_as_body"], bodyAssetIndex)]
-        assets.append(bodyAsset)
+        bodyAsset:List[Asset] = [s3DictToAsset(ezqHeader["get_s3_file_as_body"], bodyAssetIndex)]
         body = BodyInAsset(assetId=str(bodyAssetIndex))
     else:
         body = BodyInString(string=bodyStr)
         bodyAsset = []
-    return [body, assets + bodyAsset]
+    return (body, assets + bodyAsset)
 
 
-def makeAssets(ezqHeader):
-    assets: List[Asset] = []
+def makeAssets(ezqHeader:Dict[str, Any]) -> List[Asset]:
+    assets:List[Asset] = []
     # aindex is a monotonically increasing number to use as an ID
     for aindex, item in enumerate(ezqHeader.get("get_s3_files", [])):
         assets.append(s3DictToAsset(item, aindex))
     return assets
 
 
-def s3DictToAsset(d, idint):
+def s3DictToAsset(d:Dict[str, Any], idint:int) -> S3Asset:
     key = d["key"]
     path = "s3://{bucket}/{key}".format( bucket=d["bucket"],
                                             key=key)
@@ -140,16 +145,16 @@ def s3DictToAsset(d, idint):
     dc = Decompression(decompress)
     settings = AssetSettings( id="asset_{}".format(idint),
                               decompression=dc)
-    return S3Asset( path=path, settings=settings )
+    return S3Asset( path=S3Path(path), settings=settings )
 
 
-def convertToEZQ(message):
+def convertToEZQ(message:Message) -> str:
     header = message.header
     body = message.body
 
     step, *otherSteps = header.steps
 
-    directives = {}
+    directives:Dict[str, Any] = {}
     # EZQ uses only command strings
     directives["process_command"] = " ".join(step.command.arglist)
 
@@ -162,10 +167,10 @@ def convertToEZQ(message):
 
     if isinstance(body, BodyInAsset):
         aid = body.assetId
-        bodyAsset = list(filter(lambda a: a.id == aid, step.assets))[0]
+        bodyAsset = list(filter(lambda a: a.settings.id == aid, step.assets))[0]
         assert(isinstance(bodyAsset, S3Asset)) # EZQ doesn't support anything else for this case
         bodyString = "Message body was diverted to S3 as {}".format(bodyAsset.path)
-        directives["get_s3_file_as_body"] = toBkDict(bodyAsset)
+        directives["get_s3_file_as_body"] = assetToBkDict(bodyAsset)
     else:
         assert(isinstance(body, BodyInString))
         bodyString = body.string
@@ -180,11 +185,22 @@ def convertToEZQ(message):
     return fullMessageString
 
 
-def assetsToGetFiles(assets):
+# Since everything currently using EZQ only deals with assets in S3, we're
+# going to assume that anything coming from or going to EZQ format only deals
+# with assets in S3. This logic will need to be expanded to include other Asset
+# types if that ever changes.
+def assetsToGetFiles(assets:List[Asset]) -> Sequence[Dict]:
     return list(map(assetToBkDict, assets))
 
 
-def assetToBkDict(asset):
+def assetToBkDict(asset:Asset) -> Dict:
     assert(isinstance(asset, S3Asset))
     s3path = S3Path(asset.path)
     return {"bucket": s3path.bucket, "key": s3path.key}
+
+
+def toEzqOrJsonLines(message:Message) -> str:
+    if isinstance(message.header.steps[0].protocol, ProtocolEZQ):
+        return convertToEZQ(message)
+    else:
+        return message.toMinJsonLines()
