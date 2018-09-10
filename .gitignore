@@ -6,4 +6,5 @@ tmp/
 jammy.zip
 locate.db
 .env
-
+**__pycache__/
+obsolete/
