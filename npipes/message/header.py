@@ -218,8 +218,7 @@ class Asset(Serializable):
        running a Step's Command.
     """
     # Stub property. Should this use ABC or protocol instead?
-    settings = AssetSettings("") # type: ignore # <- mypy doesn't like coconut's default value
-                                                # constructors
+    settings = AssetSettings("")
 
     def _fromDict(d):
         typ = d.get("type").lower()

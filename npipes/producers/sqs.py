@@ -30,7 +30,7 @@ class ProducerSqs(Producer):
         """
         sqs = boto3.resource('sqs')
         queue = sqs.get_queue_by_name(QueueName=self.queueName)
-        fake_message = Message() # type: ignore # reason: mypy can't handle Coconut default args
+        fake_message = Message()
 
         sqsMsgs: List[boto3.SQS.Message] = []
         while True:
