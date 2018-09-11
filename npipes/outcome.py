@@ -5,10 +5,8 @@
 from typing import Any, Callable, TypeVar, Union, Generic, Optional, Sequence, Iterator, cast
 from contextlib import contextmanager
 
-L = TypeVar("L", covariant=True)
-R = TypeVar("R", covariant=True)
-T = TypeVar("T", bound="Outcome(Generic[L, R])", covariant=True)
-U = TypeVar("U", bound="Outcome(Generic[L, Any])", covariant=True)
+L = TypeVar("L")
+R = TypeVar("R")
 C = TypeVar("C")
 
 class Outcome(Generic[L, R]):
