@@ -34,12 +34,10 @@ class ProducerSqs(Producer):
 
         sqsMsgs: List[boto3.SQS.Message] = []
         while True:
-            while not sqsMsgs:
-                sqsMsgs = queue.receive_messages(AttributeNames=['VisibilityTimeout'],
-                                                 MaxNumberOfMessages=self.maxNumberOfMessages,
-                                                 WaitTimeSeconds=20)
-            while sqsMsgs: # Allows changing MaxNumberOfMessages to > 1 for batching
-                sqsMsg = sqsMsgs.pop()
+            sqsMsgs = queue.receive_messages(AttributeNames=['VisibilityTimeout'],
+                                             MaxNumberOfMessages=self.maxNumberOfMessages,
+                                             WaitTimeSeconds=20)
+            for sqsMsg in sqsMsgs: # Allows changing MaxNumberOfMessages to > 1 for batching
                 with Message.fromStr(sqsMsg.body) as msg:
                     result = yield msg
                 if isinstance(result, Success):
