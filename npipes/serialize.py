@@ -59,7 +59,7 @@ class Serializable:
             this = self._toDict(methodcaller("_toMinDict"))
             return subtractDicts(this, default)
         except TypeError as e:
-            print("WARNING: _toMinDict: using fallthrough for type {}".format(type(self)))
+#            print("WARNING: _toMinDict: using fallthrough for type {}".format(type(self)))
             return self._toDict()
 
     def _with(self:T, paths:Sequence[Tuple[str, Any]]) -> T:
