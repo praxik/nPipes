@@ -14,11 +14,11 @@ from .header import (Header, Step, Trigger, TriggerGet, Uri, QueueName, TriggerS
                      Message)
 
 from ..assethandlers.s3path import S3Path
-from ..utils.autodeleter import autoDeleteFile
+from ..utils.autodeleter import AutoDeleter
 from ..assethandlers.assets import randomName
 
 # TODO: Add type annotations to this file?
-# TODO: Find suitable place tp warn about NPIPES_SqsOverflowPath env var
+# TODO: Find suitable place to warn about NPIPES_SqsOverflowPath env var
 
 # Using injection of cls = Message to break dep cycle. Downside is this
 # hides the Message and Body types, so we're not getting full benefit of
@@ -34,6 +34,8 @@ def convertFromEZQ(cls, s):
     # Apps set to run under ezq mostly take a -o cmdline arg and expect
     # the variable $id to be expanded into whatever is needed. So here we
     # choose an id, expand $id in the cmdStr, then set outfile to output_$id.txt
+    # Following EZQ's workflow, we also remove the file "output_#{@id}.txt"
+    # at the end.
     id = secrets.token_hex(4)
     outfile = FilePath("output_{}.txt".format(id))
     fullMsgFilename = randomName() + ".ezq_full_msg"
@@ -42,8 +44,10 @@ def convertFromEZQ(cls, s):
                        outputChannel=OutputChannelFile(outfile))
     steps = makeSteps(id, command, assets, ezqHeader)
 
-    with autoDeleteFile(fullMsgFilename) as fmf:
-        writeEZQFullMessage(fmf, ezqHeader, bodyStr)
+    with AutoDeleter() as deleter:
+        deleter.add(outfile)
+        deleter.add(fullMsgFilename)
+        writeEZQFullMessage(fullMsgFilename, ezqHeader, bodyStr)
         yield cls(Header(steps=steps), body=body)
 
 
