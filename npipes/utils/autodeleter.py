@@ -1,30 +1,37 @@
 from contextlib import contextmanager, ExitStack
 from pathlib import Path
+from typing import Iterator
+
+from npipes.utils.typeshed import pathlike
 
 @contextmanager
-def autoDeleteFile(file):
+def autoDeleteFile(path:pathlike) -> Iterator[pathlike]:
     """Context manager that deletes a single file when the context ends
     """
     try:
-        yield file
+        yield path
     finally:
-        if Path(file).is_file():
-            Path(file).unlink()
+        if Path(path).is_file():
+            Path(path).unlink()
 
 
 class AutoDeleter(ExitStack):
-    """Stack-based context manager that allows incrementally adding files
-       to a single logical context. Useful for working with temporary files
-       on disk that should be removed at the end of a computation.
+    """Stack manager for auto-deleting files; allows files to be added incrementally.
 
-       Ex:
-       with AutoDeleter() as deleter:
-           deleter.add(file_1)
-           # ...
-           deleter.add(file_2)
-           # ...
+    Useful for working with temporary files on disk that should be
+    removed at the end of a computation.
 
-       # Both file_1 and file_2 automatically get deleted here
+    Ex:
+    with AutoDeleter() as deleter:
+        deleter.add(file_1)
+        # ...
+        deleter.add(file_2)
+        # ...
+        file_3 = deleter.add("some_file.txt")
+
+    # file_1, file_2, and file_3 are deleted here automatically
     """
-    def add(self, file):
-        return self.enter_context(autoDeleteFile(file))
+    def add(self, path:pathlike) -> pathlike:
+        """Returns path after adding it to the auto-deletion context.
+        """
+        return self.enter_context(autoDeleteFile(path))
