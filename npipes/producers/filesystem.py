@@ -6,7 +6,7 @@ from typing import Generator, List, Dict, Any
 from dataclasses import dataclass
 
 from ..message.header import Message
-from ..outcome import Outcome, Success, Failure
+from ..outcome import Outcome, Success, Failure, pureOutcome, liftOutcome
 from .producer import Producer
 from ..utils.typeshed import pathlike
 
@@ -46,21 +46,13 @@ class ProducerFilesystem(Producer):
         processed:List[Path] = []
         while True:
 
-            # Fake Successes to hack decent pipelining into Python
-            # files = ( Success(Path(self.dir))
-            #           >> (lambda p: Success(p.glob("*")))
-            #           >> (lambda g: Success(filter(lambda f: f.is_file(), g)))
-            #           >> (lambda fs: Success(filter(lambda f: f not in processed, fs)))
-            #           >> (lambda fs: Success(sorted(fs, key=(lambda f: f.stat().st_mtime))))
-            #         ).value
+            files = ( pureOutcome(Path(self.dir).glob("*"))
+                      >> liftOutcome(lambda g: filter(lambda f: f.is_file(), g))
+                      >> liftOutcome(lambda fs: filter(lambda f: f not in processed, fs))
+                      >> liftOutcome(lambda fs: sorted(fs, key=(lambda f: f.stat().st_mtime))) )
+            assert(isinstance(files, Success))
 
-            files:List[Path] = sorted(
-                filter(lambda f: f not in processed,
-                       filter(lambda f: f.is_file(),
-                              Path(self.dir).glob("*"))),
-                key=(lambda f: f.stat().st_mtime))
-
-            for file in files:
+            for file in files.value:
                 with Message.fromStr(file.read_text()) as msg:
                     result = yield msg
                 if isinstance(result, Success):
