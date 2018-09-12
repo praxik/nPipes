@@ -1,106 +1,121 @@
 # -*- mode: python;-*-
 
-# TODO: split this into its own package
+# NOTES: This file looks big, but it's well under 100 loc if you omit docstrings.
+#
+# Outcome is a close cousin of Haskell's Either type, with Failure on the left
+# and Success on the right. It is also a not-quite-a-monad, with `then` standing
+# in for `bind`. There is no `join` (which doesn't seem terribly useful in Python).
+# `return` is re-spelled `pureOutcome`, for obvious reasons.
 
-from typing import Any, Callable, TypeVar, Union, Generic, Optional, Sequence, Iterator, cast
+from typing import Any, Callable, TypeVar, Union, Generic, Optional, Sequence, Iterator
 from contextlib import contextmanager
 
-L = TypeVar("L")
-R = TypeVar("R")
-C = TypeVar("C")
+L = TypeVar("L")  # The "left" side of the Either -- Failure's held type
+R = TypeVar("R")  # The "right" side of the Either -- Success's held type
+C = TypeVar("C")  # Return type of Callables
 
 class Outcome(Generic[L, R]):
     """Base class describing outcome of a computation: Success or Failure.
 
-       Functions returning an Outcome can be chained together so that the
-       chain stops at the first step that returns Failure. This can be used
-       to provide linear control flow for long sequences of operations that
-       might fail at any step.
+    Functions returning an Outcome can be chained together so the
+    chain stops at the first step returning Failure. This can be used
+    to provide linear control flow for long sequences of operations that
+    might fail at any step.
 
-       The type annotations and `cast`s in the following examples are only
-       required if using `mypy` or another typechecker. They can be omitted
-       otherwise. The examples are a bit contrived, as normally one would be
-       using functions that *return* an Outcome, rather than simply wrapping
-       a value directly in Success or Failure.
-       Examples:
+    The type annotations and `cast`s in the following examples are
+    only required if using a typechecker. They can be omitted
+    otherwise.
 
-       # Since each step returns Success, the whole chain runs to the end:
-       a:Outcome[str, int] = ( Success(1)
-                               >> (lambda x: Success(x+1))
-                               >> (lambda y: Success(y *3)) )
-       print(isinstance(a, Success))
-       # => True
-       for value in onSuccess(a):
-           print(value)
-       # => 6
+    Examples:
 
-       # The second step returns Failure, so the computation stops there. Note
-       # the `cast` operation; it's entirely to help the typechecker understand
-       # our intent here.
-       b:Outcome[str, int] = ( cast(Outcome[str, int], Success(1))
-                               >> (lambda _: Failure("foo" ))
-                               >> (lambda _: Success(0)) )
-       print(isinstance(b, Success))
-       # => False
-       print(isinstance(b, Failure))
-       # => True
-       for reason in onFailure(b):
-           print(reason)
-       # => "foo"
+    # Since each step returns Success, the whole chain runs to the end:
+    a:Outcome[str, int] = ( Success(1)
+                            >> (lambda x: Success(x+1))
+                            >> (lambda y: Success(y *3)) )
+    print(isinstance(a, Success))
+    # => True
+    for value in onSuccess(a):
+        print(value)
+    # => 6
+
+    # The second step returns Failure, so the computation stops there. Note
+    # the `cast` operation; it's entirely to help the typechecker understand
+    # our intent here.
+    b:Outcome[str, int] = ( cast(Outcome[str, int], Success(1))
+                            >> (lambda _: Failure("foo" ))
+                            >> (lambda _: Success(0)) )
+    print(isinstance(b, Success))
+    # => False
+    print(isinstance(b, Failure))
+    # => True
+    for reason in onFailure(b):
+        print(reason)
+    # => "foo"
     """
     def __init__(self) -> None:
         self.err:L
         self.val:R
 
-    def then(self, f: Callable[[R], 'Outcome[L, Any]']) -> 'Outcome[L, Any]':
-        """Monadic bind; chains together computations that consume plain data
-           and emit an Outcome. In case of Failure, simply returns Failure.
-           In case of Success, applies `f` to the value held by `self`.
+    def then(self, f: Callable[[R], "Outcome[L, Any]"]) -> "Outcome[L, Any]":
+        """Chains together computations that consume plain data and return an Outcome.
 
-           Example:
-           # Let a, b, c, and d be functions that consume an int and return
-           # either Success or Failure:
+        In case of Failure, simply returns Failure.
+        In case of Success, applies f to the value held by self.
 
-           a(0).then(b).then(c).then(d)
+        Args:
+            f (Callable[[R], Outcome[L, Any]]): Function to apply to held value
+              iff held value is a Success
 
-           Computation will halt at the first function that returns a Failure.
+        Returns:
+            An Outcome; either f applied to held value of *this* Outcome, or the
+              Failure that is *this* Outcome.
 
-           `then` is especially useful when combined with partial
-           application (see functool.partial) or lambdas.
+        Example:
+        # Let a, b, c, and d be functions that consume an int and return
+        # either Success or Failure:
+
+        a(0).then(b).then(c).then(d)
+
+        Computation will halt at the first function that returns a Failure.
         """
         if isinstance(self, Success):
             return f(self.val)
         else: # isinstance Failure
             return self
 
-    def __rshift__(self, f: Callable[[R], 'Outcome[L, Any]']) -> 'Outcome[L, Any]':
-        """Infix version of `then` using `>>` operator. See documenation for
-           `then` for more informaiton.
+    def __rshift__(self, f: Callable[[R], "Outcome[L, Any]"]) -> "Outcome[L, Any]":
+        """Infix version of `then` using `>>` operator.
 
-           Example from `then`, rewritten with `>>`:
+        See documenation for `then`. This infix version should call to mind
+        Haskell's `>>=` or FSharp's `|>`.
 
-           a(0) >> b >> c >> d
+        Example from `then`, rewritten with `>>`:
+
+        a(0) >> b >> c >> d
         """
         return self.then(f)
 
 
 class Failure(Outcome[L, R]):
-    """Intended for use as the return type of a computation to indicate
-       failure to complete the computation. Property `reason` should explain
-       the problem. `reason` need not be a string; one could, for example, pass
-       `Exceptions` in the Failure.
+    """Intended for use as the return type of a computation to indicate failure.
 
-       Example:
+    Property `reason` should explain the problem.
 
-       f = Failure("This failed because it couldn't succeed!")
-       f.reason
-       # => "This failed because it couldn't succeed!"
+    Example:
+
+    f = Failure("This failed because it couldn't succeed!")
+    f.reason
+    # => "This failed because it couldn't succeed!"
     """
     def __init__(self, reason:L) -> None:
+        """Create a Failure with reason as the held value describing the failure.
+        """
         self.err = reason
 
     @property
     def reason(self) -> L:
+        """The reason for failure, which may be of any type.
+        """
         return self.err
 
     def __repr__(self) -> str:
@@ -108,21 +123,25 @@ class Failure(Outcome[L, R]):
 
 
 class Success(Outcome[L, R]):
-    """Intended for use as the return type of a computation to indicate
-       Successful completion. Property `value` contains the "result" of the
-       computation.
+    """Intended for use as the return type of a computation to indicate success.
 
-       Example:
+    Property `value` contains the "result" of the computation.
 
-       s = Success(1234)
-       s.value
-       # => 1234
+    Example:
+
+    s = Success(1234)
+    s.value
+    # => 1234
     """
     def __init__(self, v:R) -> None:
+        """Create a Success with v as the held value.
+        """
         self.val = v
 
     @property
     def value(self) -> R:
+        """The held value. Can be of any type.
+        """
         return self.val
 
     def __repr__(self) -> str:
@@ -132,7 +151,6 @@ class Success(Outcome[L, R]):
 def onFailure(oc:Outcome[L, R]) -> Iterator[L]:
     """Yields the reason of the failure, iff the thing failed
     """
-    # Can't use `if failed(oc):` because mypy can't infer type of `oc` :|
     if isinstance(oc, Failure):
         yield oc.reason
 
@@ -145,7 +163,7 @@ def onSuccess(oc:Outcome[L, R]) -> Iterator[R]:
 
 
 def failed(oc:Outcome[L, R]) -> bool:
-    """Did the operation fail?
+    """Returns True if oc is a Failure
     """
     if isinstance(oc, Failure):
         return True
@@ -154,7 +172,7 @@ def failed(oc:Outcome[L, R]) -> bool:
 
 
 def succeeded(oc:Outcome[L, R]) -> bool:
-    """Did the operation succeed?
+    """Returns True if oc is a Success
     """
     if isinstance(oc, Success):
         return True
@@ -163,9 +181,10 @@ def succeeded(oc:Outcome[L, R]) -> bool:
 
 
 def filterMapFailed(f: Callable[[L], C], ocs:Sequence[Outcome[L, R]]) -> Iterator[C]:
-    """Map a function *f* over a sequence of Outcomes, applying the function
-       only if the Outcome is a Failure, and **omitting** it from the resulting
-       sequence if it is a Success.
+    """Yields values obtained by mapping f over **only** the Failures in ocs.
+
+    NOTE: This is a filter followed by a map, so the returned iterator may have
+    fewer elements than the input seqeuence
     """
     for oc in ocs:
         for reason in onFailure(oc):
@@ -173,101 +192,83 @@ def filterMapFailed(f: Callable[[L], C], ocs:Sequence[Outcome[L, R]]) -> Iterato
 
 
 def filterMapSucceeded(f: Callable[[R], C], ocs:Sequence[Outcome[L, R]]) -> Iterator[C]:
-    """Map a function *f* over a sequence of Outcomes, applying the function
-       only if the Outcome is a Success, and **omitting** it from the resulting
-       sequence if it is a Failure.
+    """Yields values obtained by mapping f over **only** the Successes in ocs.
+
+    NOTE: This is a filter followed by a map, so the returned iterator may have
+    fewer elements than the input seqeuence
     """
     for oc in ocs:
         for value in onSuccess(oc):
             yield f(value)
 
 
-# def do1() -> Outcome[str, int]:
-#     return Success(1)
+def pureOutcome(v:Any, sentinels:Sequence[Any]=[None], fstring:str="") -> Outcome:
+    """Injects value v into an Outcome.
 
-# def do2(a:int) -> Outcome[str, int]:
-#     return Success(a)
+    Args:
+        v: the value to inject into an Outcome
 
-# def do3(a:int) -> Outcome[str, int]:
-#     return Failure("Error!")
+        sentinels: indicates which values to return as Failure;
+        anything else is returned as Success.
 
+        fstring: string to return as part of a Failure. This can be useful
+        for notating where an injected value entered a computation.
 
-# print(do1().value)
-# print(do2(3).value)
-# print(do2("three").value)
+    Returns:
+        An Outcome. If Succcess, v is the held value. If Failure, the reason is
+        a 2-tuple in which the first element is v, and the second is fstring.
 
-# t = do3(3)
-# if isinstance(t, Failure):
-#     print(t.reason)
-# else:
-#     print("Huh. This shouldn't be called.")
-
-# print((do1() >> do2).value)
-
-
-
-
-
-# for reason in onFailure(do3(3)):
-#     print(reason)
-
-# for value in onSuccess(do1()):
-#     print(value)
-
-# for reason in onFailure(do1()):
-#     print("Should be unreachable 1")
-#     print(reason)
-
-# for value in onSuccess(do3(2)):
-#     print("Should be unreachable 2")
-#     print(value)
+    Notes:
+        Use of this function may require obnoxious casts to satisfy typecheckers.
+    """
+    if v in sentinels:
+        return Failure((v, fstring))
+    else:
+        return Success(v)
 
 
-# OCSI = Outcome[str, int]
+def liftOutcome(f: Callable[[R], C],
+                sentinels:Sequence[Any]=[None],
+                fstring:Optional[str]=None,
+                catch=False) -> Callable[[R], Outcome[Any, C]]:
+    """Transforms a function returning a value into a function returning an Outcome.
 
-# # Shows how to cast "raw" Success or Failure so mypy can check them correctly
-# print(list(mapFailed(print, [
-#     cast(OCSI, Failure("F1")),
-#     cast(OCSI, Success(999)),
-#     cast(OCSI, Failure("F2"))])))
+    Args:
+        f: function to transform
 
-# def floaty() -> Outcome[str, float]:
-#     return Success(2.1)
+        sentinels: indicates which values to return as Failure;
+        anything else is returned as Success.
 
-# def inty(i:int) -> Outcome[str, int]:
-#     return Success(i)
+        fstring: string to return as part of a Failure. This can be useful
+        for notating where an injected value entered a computation. If not provided,
+        this will automatically be set to the __name__ of the function f.
+
+        catch: indicates whether to silently catch Exceptions and return them
+        as Failure. Default: False
+
+    Returns:
+        A wrapped function that returns an Outcome rather than a plain value.
+
+    Notes:
+        User of this function may require obnoxious casts to satisfy typecheckers.
+    """
+    if fstring is None: # Have to differentiate from empty string!
+        myfstring = f.__name__
+    else:
+        myfstring = fstring
+    if catch:
+        return (lambda x: _exceptionWrapped(f, x, sentinels, myfstring))
+    else:
+        return (lambda x: pureOutcome(f(x), sentinels, myfstring))
 
 
-# # Does not typecheck because a float cannot be sent into a function expecting an int
-# # WARNING: the opposite is NOT true! If you try to send an int into a function expecting
-# # a float, mypy does not complain!
-# floaty() >> inty
-
-# Typechecks because the lambda in the middle does the required cast:
-# print( floaty()
-#        .then((lambda x: cast(Outcome[str, int], Success(int(x)))))
-#        .then(inty) )
-
-
-# def floater(v:float) -> float:
-#     return v * 2.1
-
-# a:int = 3
-
-# # You'd think this wouldn't typecheck...but it does. Mypy silently promotes `int` to `float`
-# print(floater(a))
-
-# print(Success(23))
-
-# a:Outcome[str, int] = Success(1) >> (lambda x: Success(x+1)) >> (lambda y: Success(y *3))
-# print(isinstance(a, Success))
-# for value in onSuccess(a):
-#     print(value)
-
-# b:Outcome[str, int] = cast(Outcome[str, int], Success(1)) >> (lambda _: Failure("foo" )) >> (lambda _: Success(0))
-# print(isinstance(b, Success))
-# # => False
-# print(isinstance(b, Failure))
-# # => True
-# for reason in onFailure(b):
-#     print(reason)
+def _exceptionWrapped(f: Callable[[R], C],
+                      x:R,
+                      sentinels:Sequence[Any],
+                      fstring:str) -> Outcome[Any, C]:
+    """Helper function for liftOutcome
+    """
+    try:
+        return pureOutcome(f(x), sentinels, fstring)
+    except Exception as e:
+        return Failure((e, fstring))
