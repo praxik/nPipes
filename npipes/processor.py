@@ -6,10 +6,6 @@ import string
 import logging
 from pathlib import Path
 
-# from .message.message import (
-#     Body, BodyInString, BodyInAsset, Message,
-#     peekStep, popStep, peekTrigger)
-
 from .outcome import Success, Failure, onFailure, onSuccess, filterMapFailed
 
 from .message.header import (
@@ -21,8 +17,6 @@ from .message.header import (
     Step, Header, Body, BodyInString, BodyInAsset, Message,
     peekStep, popStep, peekTrigger)
 
-# from .message.body import Body, BodyInString, BodyInAsset
-
 from .assethandlers.assets import localizeAssets, decideLocalTarget, randomName
 from .configuration import Configuration
 from .serialize import toJson
@@ -32,11 +26,7 @@ from .utils.iteratorextras import consume
 from .utils.typeshed import pathlike
 from .utils.autodeleter import AutoDeleter
 from .utils.compressionutils import fromGzB64
-
-
-# Probably going to move into some sort of Factory / Service Discovery setup:
-# from .producers.sqs import ProducerSqs
-# from .producers.yyy import ProducerY
+from .utils.track import track
 
 # This file is largely organized according to a "dependencies first" rule.
 # Control flow starts near the *bottom* of the file, and moves upward as needed.
@@ -51,9 +41,9 @@ def scrapeOutput(command:Command, cmdstdout:str) -> Outcome[str, str]:
         if p.is_file():
             result = Success(p.read_text())
         else:
-            result = Failure("Output file {} does not exist".format(p))
+            result = Failure(track(f"Output file {p} does not exist"))
     else:
-        result = Failure("Unknown type of OutputChannel")
+        result = Failure(track("Unknown type of OutputChannel"))
     return result
 
 
@@ -66,13 +56,14 @@ def runProcess(command:Command, input:Optional[bytes], timeout:Optional[int]) ->
         cp = subprocess.run(command.arglist, input=input, timeout=timeout,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except subprocess.TimeoutExpired as teerr:
-        return Failure("Command timed out")
+        return Failure(track("Command timed out"))
     except Exception as err:
-        return Failure("Unknown error running command: {}".format(err))
+        return Failure(track(f"Unknown error running command: {err}"))
 
     if cp.returncode is not 0:
-        return Failure("Exit code: {}\nstdout: {}\nstderr: {}".format(
-                        cp.returncode, cp.stdout.decode(), cp.stderr.decode()))
+        return Failure(track(f"Exit code: {cp.returncode}\n"
+                             f"stdout: {cp.stdout.decode()}\n"
+                             f"stderr: {cp.stderr.decode}"))
     else:
         return Success(cp.stdout.decode())
 
@@ -209,7 +200,7 @@ def handleMessage(config, msg):
 
 
 def runMessageProducer(config:Configuration, producer:Producer) -> None:
-    """Runs a message *Producer* as a stream
+    """Runs a message Producer as a stream
     """
     stream = producer.messages()
     for msg in stream: # () -> Message
@@ -219,10 +210,6 @@ def runMessageProducer(config:Configuration, producer:Producer) -> None:
 
         for reason in onFailure(result):
             logging.fatal(reason)
-
-        consume(filterMapFailed(lambda reason: logging.fatal(reason), [result]))
-        # if isinstance(result, Failure):
-        #     logging.fatal(result.reason)
 
         # TODO: check value of state.run and break out if False
     return None

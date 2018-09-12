@@ -19,6 +19,7 @@ from ..outcome import Outcome, Success, Failure, onFailure, filterMapSucceeded
 from ..utils.fp import concurrentMap
 from ..utils.iteratorextras import consume
 from .s3path import S3Path
+from ..utils.track import track
 from ..utils.typeshed import pathlike
 
 
@@ -34,7 +35,7 @@ def localizeAssets(assets:Sequence[Asset]) -> Outcome[str, Sequence[pathlike]]:
         logFailures(outcomes, assets)
         # Clean up the successful downloads
         consume(filterMapSucceeded(lambda p: Path(p).unlink(), outcomes))
-        return Failure("Unable to localize one or more assets")
+        return Failure(track("Unable to localize one or more assets"))
     else:
         return Success(list(map(lambda oc: oc.value, outcomes)))
 
@@ -64,7 +65,7 @@ def localizeAssetTyped(asset:Asset, target:str) -> Outcome[str, pathlike]:
     elif isinstance(asset, UriAsset):
         return localizeUriAsset(asset, target)
     else:
-        return Failure("Unknown Asset type {}".format(type(asset)))
+        return Failure(track(f"Unknown Asset type {type(asset)}"))
 
 # Boto is large, so don't assume s3 utils are available:
 try:
@@ -122,7 +123,7 @@ def decompress(path:pathlike) -> Outcome[str, pathlike]:
     elif suff == ".gz":
         return decompressGzip(path)
     else:
-        return Failure("Unable to determine decompressor from file extension")
+        return Failure(track(f"Unable to determine decompressor from file extension {suff}"))
 
 
 def decompressZip(file:pathlike) -> Outcome[str, pathlike]:
@@ -138,7 +139,7 @@ def decompressZip(file:pathlike) -> Outcome[str, pathlike]:
         if Path(tmpdir).exists(): # Clean up if things go wrong
             distutils.dir_util.remove_tree(tmpdir)
             Path(file).unlink()
-        return Failure("Decompression error: {}".format(err))
+        return Failure(track(f"Decompression error: {err}"))
 
 
 def decompressGzip(file:pathlike) -> Outcome[str, pathlike]:
@@ -154,7 +155,7 @@ def decompressGzip(file:pathlike) -> Outcome[str, pathlike]:
                 shutil.copyfileobj(src, dst)
         return Success(target)
     except Exception as err:
-        return Failure("decompressGzip failed with {}".format(err))
+        return Failure(track(f"decompressGzip failed with {err}"))
 
 
 def renameToLocalTarget(fname:pathlike, asset:Asset) -> Outcome[str, pathlike]:
@@ -174,10 +175,10 @@ def renameToLocalTarget(fname:pathlike, asset:Asset) -> Outcome[str, pathlike]:
                 distutils.dir_util.copy_tree(str(fname), target)
                 distutils.dir_util.remove_tree(str(fname))
             else:
-                return Failure("Unable to rename a file to {}".format(targetPath))
+                return Failure(track(f"Unable to rename a file to {targetPath}"))
         return Success(target)
     except Exception as err:
-        return Failure("Error renaming to local target {}: {}".format(target, err))
+        return Failure(track(f"Error renaming to local target {target}: {err}"))
 
 
 def getAssetRawExt(asset:Asset) -> str:

@@ -7,7 +7,7 @@ import boto3
 from ..outcome import Outcome, Success, Failure
 from ..utils.typeshed import pathlike
 from .s3path import S3Path
-
+from ..utils.track import track
 
 
 
@@ -32,7 +32,7 @@ def downloadFile(remotePath:Union[str, S3Path], localPath:pathlike) -> Outcome[s
             return checkLocal(localPath) # use localPath rather than pth so contained returned
                                          # type is same as input type
     except Exception as err:
-        return Failure("Unable to download {}. Reason: {}".format(remotePath, err))
+        return Failure(track("Unable to download {remotePath}. Reason: {err}"))
 
 
 def isCurrent(obj:Any, pth:pathlib.Path) -> bool:
@@ -64,7 +64,7 @@ def checkLocal(pth:pathlike) -> Outcome[str, pathlike]:
     if p.exists() and p.stat().st_size > 0:
         return Success(pth)
     else:
-        return Failure("Error downloading {}; local file does not exist or is empty".format(str(pth)))
+        return Failure(track("Error downloading {str(pth)}; local file does not exist or is empty"))
 
 
 # TODO: For both of these upload functions, should probably be doing something sane
@@ -85,8 +85,7 @@ def uploadFile(localPath:pathlike, remotePath:Union[str, S3Path]) -> Outcome[str
             obj.upload_file(str(localPath))
             return Success(remotePath)
     except Exception as err:
-        return Failure("Unable to upload {} to {}. Reason: {}"
-                        .format(str(localPath), str(remotePath), err))
+        return Failure(track("Unable to upload {localPath} to {remotePath}. Reason: {err}"))
 
 
 # -> Outcome[str, Union[str, S3Path]]
@@ -109,5 +108,4 @@ def uploadData(data:AnyStr, remotePath:Union[str, S3Path]) -> Outcome[str, Union
         obj.put(Body=bData, ContentMD5=md5)
         return Success(remotePath)
     except Exception as err:
-        return Failure("Unable to upload data to {}. Reason: {}"
-                        .format(str(s3path), err))
+        return Failure(track("Unable to upload data to {s3path}. Reason: {err}"))
