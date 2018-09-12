@@ -5,14 +5,31 @@ import unittest
 import os
 from itertools import chain
 from pathlib import Path
+import textwrap
+import warnings
+
+import boto3
+import yaml
 
 from npipes.processor import *
-# from npipes.message.message import *
 from npipes.outcome import *
 from npipes.message.header import *
 from npipes.producers.filesystem import ProducerFilesystem
 
+
+
 class ProcessorTestCase(unittest.TestCase):
+
+    def setUp(self):
+        with open(".testrc") as cfgFile:
+            cfg = yaml.load(cfgFile.read()) or {}
+        self.test_sqs_queue = cfg.get("test_sqs_queue", "")
+        # Filter out an obnoxious, but apparently unimportant resource warning
+        # caused by the way boto3 handles its connection pool.
+        # See https://github.com/boto/boto3/issues/454#issuecomment-380900404
+        warnings.filterwarnings("ignore",
+                                category=ResourceWarning,
+                                message="unclosed.*<ssl.SSLSocket.*>")
 
     def test_runProcess(self):
         command = Command(["ls","tests/static"], outputChannel=OutputChannelStdout())
@@ -123,7 +140,48 @@ class ProcessorTestCase(unittest.TestCase):
                                     range(1,4)))
         for msg in expectedMessages:
             self.assertTrue(msg in results)
-        # self.assertEqual(results, expectedMessages)
+
+    # TODO: Should this test be moved elsewhere since it relies on
+    # A. network access
+    # B. active AWS account with SQS perms
+    def test_runMessageProducerEzqStyle(self):
+        """Tests EZQ style messages against a filesystem producer"""
+
+        testIn = "tests/fsp"
+        testOut = "tests/fsp/results"
+        for f in chain(Path(testIn).glob("*"), Path(testOut).glob("*")):
+            if f.is_file():
+                f.unlink()
+
+        producer = ProducerFilesystem("tests/fsp", quitWhenEmpty=True,
+                                      removeSuccesses=True, removeFailures=True)
+
+        ezqMsgString = textwrap.dedent(f"""
+                        ---
+                        EZQ:
+                          process_command: "cat $input_file >> output_$id.txt"
+                          result_queue_name: {self.test_sqs_queue}
+                        ...
+                        The message body
+                        """).lstrip()
+        Path(testIn).joinpath("testmsg").write_text(ezqMsgString)
+
+        config = Configuration(lockCommand=False) # putting the command in the messages
+
+        runMessageProducer(config, producer)
+
+        sqs = boto3.resource('sqs')
+        queue = sqs.get_queue_by_name(QueueName=self.test_sqs_queue)
+        msgs = queue.receive_messages(AttributeNames=['VisibilityTimeout'],
+                                      MaxNumberOfMessages=1,
+                                      WaitTimeSeconds=20)
+        if msgs:
+            with Message.fromStr(msgs[0].body) as msg:
+                msgs[0].delete()
+                self.assertEqual(msg.body.string, "The message body\n")
+        else:
+            self.fail("Expected mesage not found in remote queue")
+
 
 
 
