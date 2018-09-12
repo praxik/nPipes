@@ -1,7 +1,5 @@
-mypy
-coconut
-
 requests
 boto3
 pyyaml
-dataclasses
+dataclasses  # Can go away once aws lambda has a python 3.7 runtime
+# outcome
