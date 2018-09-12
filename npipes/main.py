@@ -10,9 +10,9 @@ from base64    import b64decode
 from importlib import import_module
 from pathlib   import Path
 
-from .configuration import Configuration
-from .producers.producer      import Producer
-from .processor     import runMessageProducer
+from .configuration      import Configuration
+from .processor          import runMessageProducer
+from .producers.producer import Producer
 
 
 def getArgs():
