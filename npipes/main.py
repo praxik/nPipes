@@ -6,7 +6,6 @@ import logging
 import os
 
 from argparse  import ArgumentParser
-from base64    import b64decode
 from importlib import import_module
 from pathlib   import Path
 
@@ -33,16 +32,27 @@ def getEnv():
     keys = ["NPIPES_command", "NPIPES_lockCommand",
             "NPIPES_commandValidator", "NPIPES_producer",
             "NPIPES_producerArgs"]
-    env = {k:os.environ[k] for k in keys if k in os.environ}
+    return {k:os.environ[k] for k in keys if k in os.environ}
     # typecast the special ones
-    if "NPIPES_lockCommand" in env:
-        lcs = env["NPIPES_lockCommand"].lower()
-        env["NPIPES_lockCommand"] = True if lcs == "true" else False
-    if "NPIPES_producerArgs" in env:
-        pas = env["NPIPES_producerArgs"]
-        env["NPIPES_producerArgs"] = json.loads(b64decode(pas).decode())
+    # if "NPIPES_lockCommand" in env:
+    #     lcs = env["NPIPES_lockCommand"].lower()
+    #     env["NPIPES_lockCommand"] = True if lcs == "true" else False
+    # if "NPIPES_producerArgs" in env:
+    #     pas = env["NPIPES_producerArgs"]
+    #     env["NPIPES_producerArgs"] = json.loads(b64decode(pas).decode())
 
-    return env
+
+
+def liftConfig(config, configHash):
+    """Lifts entire configuration into env vars
+    """
+    configDict = config._toDict()
+    for k, v in configDict.items():
+        os.environ[k] = v
+    # Notice we *never* overwrite anything from the previous block
+    for k, v in configHash.items():
+        if k not in configDict.keys():
+            os.environ[k] = v
 
 
 def main():
@@ -56,9 +66,9 @@ def main():
     # Env vars *always* supersede.
     configHash = getFileConfig(args.config)
     configHash.update(getEnv())
-    config = Configuration(**configHash)
+    config = Configuration._fromDict(configHash)
 
-    # - set up env   ?? Should we lift the full config into the environment...or not?
+    liftConfig(config, configHash)
 
     producerModule = import_module(config.producer)
     producer = producerModule.createProducer(args, config.producerArgs)
