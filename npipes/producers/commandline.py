@@ -12,7 +12,7 @@ from .producer import Producer
 
 
 def createProducer(cliArgs:List[str], producerArgs:Dict) -> Producer:
-    return ProducerCommandline(**producerArgs)
+    return ProducerCommandline(cliArgs)
 
 
 @dataclass(frozen=True)
