@@ -2,7 +2,6 @@
 
 from ..message.header import Message
 from ..outcome import Outcome, Success, Failure
-# from ..message.body import Body, BodyInString, BodyInAsset
 from ..message.header import Encoding, EncodingPlainText, EncodingGzB64, S3Asset, AssetSettings, Decompression, BodyInString, BodyInAsset
 from ..assethandlers.assets import randomName
 from ..assethandlers.s3utils import uploadData
