@@ -7,6 +7,11 @@
 # If message doesn't specify command to run, or if lockCommand (below)
 # is true, what should this processor run?
 NPIPES_command:
+  arglist: []
+  timeout: 0
+  inputChannelStdin: false
+  outputChannel: 
+    type: Stdout
 
 # Always run the default command above; don't let messages override
 # the default
@@ -31,3 +36,10 @@ NPIPES_producer: npipes.producers.sqs
 NPIPES_producerArgs:  being stored as an environment variable
   key1: val1
   key2: val2
+
+### Other keys may be added below here; their values MUST be strings
+#   suitable for storing in an environment variable
+
+# This one, for example, is used by the ezq converter machinery,
+# which you probably don't care about.
+NPIPES_SqsOverflowPath: "s3://bucket/prefix"
