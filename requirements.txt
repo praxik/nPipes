@@ -1,5 +1,6 @@
 requests
-boto3
+# boto3 # This beast is only required for applications that use 
+        # AWS in some way; shouldn't be required for general use
 pyyaml
 dataclasses  # Can go away once aws lambda has a python 3.7 runtime
-# outcome
+# outcome # This will eventually replaced the cargoed version
