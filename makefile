@@ -13,6 +13,9 @@ clean: FORCE
 	rm -rf npipes/__pycache__
 	rm -rf npipes/**/__pycache__
 
+package: FORCE
+	env SOURCE_DATE_EPOCH=315532800 python3 setup.py sdist bdist_wheel
+
 FORCE: ;
 
 test:
