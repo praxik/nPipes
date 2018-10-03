@@ -27,7 +27,7 @@ def sendMessage(queuename:str, overflowPath:str, message:Message) -> Outcome[str
        "s3://bucket/my/prefix/some_random_name.gz"
     """
     try:
-        sqs = boto3.resource('sqs')
+        sqs = boto3.resource("sqs")
         queue = sqs.get_queue_by_name(QueueName=queuename)
         messageAutoflowed = overflow(message, overflowPath)
         messageBody = toEzqOrJsonLines(overflow(message, overflowPath))
