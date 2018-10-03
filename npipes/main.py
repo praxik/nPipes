@@ -17,7 +17,7 @@ from .producers.producer import Producer
 def getArgs():
     parser = ArgumentParser()
     parser.add_argument("--config", action="store", default=".npipesrc", type=Path)
-    return parser.parse_args()
+    return parser.parse_known_args()
 
 
 def getFileConfig(fname):
@@ -60,7 +60,7 @@ def main():
     logging.basicConfig(level=logging.DEBUG,
                         format="%(asctime)s|%(process)d|%(levelname)s|%(name)s: %(message)s")
 
-    args = getArgs()
+    args, extraArgs = getArgs()
 
     # Configuration comes from two places: a file on disk and env vars.
     # Env vars *always* supersede.
@@ -71,7 +71,7 @@ def main():
     liftConfig(config, configHash)
 
     producerModule = import_module(config.producer)
-    producer = producerModule.createProducer(args, config.producerArgs)
+    producer = producerModule.createProducer(extraArgs, config.producerArgs)
 
     runMessageProducer(config, producer)
 

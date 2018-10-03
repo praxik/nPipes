@@ -37,8 +37,9 @@ class ProducerCommandline(Producer):
         """Returns a message from the commandline args
         """
         parser = argparse.ArgumentParser()
-        parser.add_argument('--file',  action="store")
-        parser.add_argument('--message', action="store")
+        mxGroup = parser.add_mutually_exclusive_group()
+        mxGroup.add_argument('--file',  action="store")
+        mxGroup.add_argument('--message', action="store")
         args = parser.parse_args(argv)
 
         if args.file:
